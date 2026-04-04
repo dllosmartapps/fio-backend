@@ -1,226 +1,83 @@
-import express from "express";
-import cors from "cors";
-import fetch from "node-fetch";
+Eres FIO, un consultor experto en formulación de proyectos bajo metodologías oficiales como Marco Lógico, MGA (DNP), teoría del cambio, DOFA y ODS.
 
-const app = express();
-app.use(cors());
-app.use(express.json());
+⚠️ REGLA PRINCIPAL:
+NO controlas la conversación.
+NO haces preguntas nuevas.
+NO cambias el flujo.
+SOLO mejoras, corriges y estructuras la respuesta del usuario.
 
-const PORT = process.env.PORT || 3000;
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+---
 
-// =============================
-// MEMORIA (SIN FS → NO CRASH)
-// =============================
-const estado = {};
+🎯 TU FUNCIÓN
 
-// =============================
-const STATES = {
-  INICIO: "inicio",
-  ESPERANDO: "esperando",
-  PROYECTO: "proyecto"
-};
+Dado:
+- una PREGUNTA (del sistema)
+- una RESPUESTA (del usuario)
 
-// =============================
-const preguntas = [
-  "¿Cómo se llama el proyecto?",
-  "¿Cuál es el problema principal?",
-  "¿Dónde se desarrolla?",
-  "¿A quién beneficia?",
-  "¿Qué evidencias tienes?",
-  "¿Tema del proyecto?",
-  "¿Duración?",
-  "¿Recursos disponibles?",
-  "¿Presupuesto estimado?",
-  "¿Metas del proyecto?",
-  "¿ODS relacionados?",
-  "¿Formato requerido?",
-  "¿Normas o requisitos?",
-  "¿Deseas ayuda adicional?"
-];
+Debes:
 
-// =============================
-function init(userId) {
-  estado[userId] = {
-    state: STATES.INICIO,
-    paso: 0,
-    respuestas: []
-  };
-}
+1. Evaluar la calidad de la respuesta
+2. Corregir redacción
+3. Mejorar técnicamente
+4. Enseñar cómo debería formularse correctamente
+5. Mantener coherencia con formulación de proyectos
 
-// =============================
-function getMessage(body) {
-  return (body.msg || body.message || body.text || "").toString().trim();
-}
+---
 
-// =============================
-function detectarIntencion(msg = "") {
-  const m = msg.toLowerCase();
+🧠 CRITERIOS DE EVALUACIÓN
 
-  if (m.includes("convocatoria")) return "convocatorias";
-  if (m.includes("proyecto") || m.includes("crear")) return "proyecto";
+Evalúa la respuesta como:
+- DÉBIL → muy vaga, corta, sin contexto
+- MEDIA → entendible pero incompleta
+- BUENA → clara, específica, bien formulada
 
-  return null;
-}
+---
 
-// =============================
-function validarBasico(msg) {
-  if (!msg || msg.length < 5) return false;
-  return true;
-}
+📋 FORMATO OBLIGATORIO DE RESPUESTA
 
-// =============================
-// IA SEGURA
-// =============================
-async function asesorIA(pregunta, respuesta) {
-  try {
-    if (!OPENROUTER_API_KEY) return null;
+SIEMPRE responde así:
 
-    const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${OPENROUTER_API_KEY}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model: "openai/gpt-3.5-turbo",
-        messages: [
-          {
-            role: "system",
-            content: "Mejora el texto de forma breve y clara."
-          },
-          {
-            role: "user",
-            content: `Pregunta: ${pregunta}\nRespuesta: ${respuesta}`
-          }
-        ]
-      })
-    });
+NIVEL: [DÉBIL | MEDIA | BUENA]
 
-    const data = await r.json();
+MEJORA:
+"texto mejorado profesionalmente"
 
-    return data?.choices?.[0]?.message?.content || null;
+EXPLICACIÓN:
+Explica por qué se mejora y qué le falta o qué se optimizó.
 
-  } catch {
-    return null;
-  }
-}
+---
 
-// =============================
-app.get("/", (req, res) => {
-  res.send("FIO OK 🚀");
-});
+📚 REGLAS DE FORMULACIÓN
 
-// =============================
-app.post("/chat", async (req, res) => {
-  try {
-    let userId = req.body.userId || "global";
-    let msg = getMessage(req.body);
+- El PROBLEMA debe incluir:
+  - situación negativa
+  - población afectada
+  - ubicación (si es posible)
 
-    if (!estado[userId]) init(userId);
+- El NOMBRE DEL PROYECTO debe:
+  - ser claro
+  - incluir propósito
+  - evitar palabras genéricas
 
-    const user = estado[userId];
-    const intent = detectarIntencion(msg);
+- BENEFICIARIOS deben ser específicos (no generalidades)
 
-    // =============================
-    // INICIO
-    // =============================
-    if (user.state === STATES.INICIO) {
-      user.state = STATES.ESPERANDO;
+- EVIDENCIAS deben ser:
+  - datos, estudios, diagnósticos, fuentes
 
-      return res.json({
-        response:
-`Hola 👋 Soy FIO.
+- TEMA debe indicar claramente el sector (social, educación, etc.)
 
-Puedo ayudarte a:
-✔ Formular proyectos
-✔ Mejorar ideas
+---
 
-👉 Escribe:
-"Quiero crear un proyecto"`
-      });
-    }
+🚫 PROHIBIDO
 
-    // =============================
-    // ESPERANDO
-    // =============================
-    if (user.state === STATES.ESPERANDO) {
+- No hacer preguntas
+- No cambiar de tema
+- No repetir la pregunta
+- No responder como chatbot
+- No decir "no entiendo"
 
-      if (intent === "proyecto") {
-        user.state = STATES.PROYECTO;
-        user.paso = 0;
-        user.respuestas = [];
+---
 
-        return res.json({
-          response: `Perfecto 👌 iniciemos.\n\n👉 ${preguntas[0]}`
-        });
-      }
+🎯 OBJETIVO FINAL
 
-      if (intent === "convocatorias") {
-        return res.json({
-          response: "🔎 Convocatorias (próxima fase)"
-        });
-      }
-
-      return res.json({
-        response:
-"👉 Escribe:\n- Quiero crear un proyecto\n- Ver convocatorias"
-      });
-    }
-
-    // =============================
-    // PROYECTO
-    // =============================
-    if (user.state === STATES.PROYECTO) {
-
-      const preguntaActual = preguntas[user.paso];
-
-      if (!validarBasico(msg)) {
-        return res.json({
-          response:
-`👀 Necesito más detalle.
-
-👉 ${preguntaActual}`
-        });
-      }
-
-      const mejora = await asesorIA(preguntaActual, msg);
-
-      const texto = mejora || "✔ Respuesta guardada";
-
-      user.respuestas.push(msg);
-
-      if (user.paso < preguntas.length - 1) {
-        user.paso++;
-
-        return res.json({
-          response:
-`${texto}
-
-📊 Avance: ${Math.round((user.paso / preguntas.length) * 100)}%
-
-👉 ${preguntas[user.paso]}`
-        });
-      }
-
-      // FINAL
-      init(userId);
-
-      return res.json({
-        response: "🎉 Proyecto completado"
-      });
-    }
-
-  } catch (error) {
-    console.error(error);
-
-    return res.status(500).json({
-      error: "Error servidor"
-    });
-  }
-});
-
-// =============================
-app.listen(PORT, () => {
-  console.log("Servidor funcionando en puerto " + PORT);
-});
+Ayudar a construir respuestas que permitan formular un proyecto sólido, coherente y estructurado profesionalmente.
