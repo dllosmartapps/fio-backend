@@ -22,30 +22,28 @@ const estado = {};
 // =============================
 const preguntas = [
   "¿Cómo se llama el proyecto?",
-  "¿Cuál es el problema principal que quieres resolver?",
+  "¿Cuál es el problema principal?",
   "¿Dónde se desarrolla?",
   "¿A quién beneficia?",
-  "¿Qué evidencias tienes del problema?",
-  "¿Cuál es el tema?",
-  "¿Duración estimada?",
-  "¿Recursos disponibles?",
+  "¿Qué evidencias tienes?",
+  "¿Tema del proyecto?",
+  "¿Duración?",
+  "¿Recursos?",
   "¿Presupuesto?",
   "¿Metas?",
   "¿ODS?",
   "¿Formato?",
   "¿Normas?",
-  "¿Deseas que proponga lo faltante?"
+  "¿Deseas ayuda adicional?"
 ];
 
 // =============================
-// UTILIDADES
+// UTILS
 // =============================
-function limpiar(msg = "") {
-  return msg.toString().toLowerCase().trim();
-}
+const clean = (m = "") => m.toLowerCase().trim();
 
-function esCambioModo(msg) {
-  const m = limpiar(msg);
+function detectarModo(msg) {
+  const m = clean(msg);
 
   if (m.includes("convocatoria")) return "convocatorias";
   if (m.includes("proyecto")) return "proyecto";
@@ -53,10 +51,8 @@ function esCambioModo(msg) {
   return null;
 }
 
-function esValida(msg) {
-  if (!msg) return false;
-  if (msg.trim().length < 3) return false;
-  return true;
+function validar(msg) {
+  return msg && msg.trim().length > 3;
 }
 
 // =============================
@@ -84,42 +80,32 @@ async function llamarIA(prompt) {
 }
 
 // =============================
-// ASESOR HUMANO
+// ASESOR
 // =============================
-async function asesor(pregunta, respuesta) {
+async function asesor(p, r) {
   return await llamarIA(`
-Eres un consultor experto en proyectos.
+Eres experto en proyectos.
 
-Usuario dijo:
-"${respuesta}"
+Usuario: "${r}"
+Pregunta: "${p}"
 
-Pregunta:
-"${pregunta}"
-
-Haz esto:
-- mejora la respuesta
-- guía al usuario
-- sé amable y motivador
+Mejora la respuesta y guía.
 
 Formato:
-
-👉 Vas muy bien 🔥
-👉 Podemos formularlo así:
+👉 Mejor así:
 "texto mejorado"
-
-👉 Consejo breve
 `);
 }
 
 // =============================
 // RESET
 // =============================
-function reset(userId) {
+function init(userId) {
   estado[userId] = {
+    inicio: true,
     modo: null,
     paso: 0,
-    respuestas: [],
-    inicio: true
+    respuestas: []
   };
 }
 
@@ -133,84 +119,61 @@ app.post("/chat", async (req, res) => {
     if (!userId) userId = "global-user";
     if (!msg) msg = "";
 
-    if (!estado[userId]) reset(userId);
+    if (!estado[userId]) init(userId);
 
     const user = estado[userId];
-    const m = limpiar(msg);
+    const modoDetectado = detectarModo(msg);
 
     // =============================
-    // SALUDO INICIAL
+    // 1. DETECCIÓN GLOBAL (CLAVE)
+    // =============================
+    if (modoDetectado === "convocatorias") {
+      const conv = await buscarConvocatorias("social");
+
+      return res.json({
+        response: "🔎 Aquí tienes convocatorias:",
+        data: conv
+      });
+    }
+
+    if (modoDetectado === "proyecto") {
+      user.modo = "proyecto";
+      user.paso = 0;
+      user.respuestas = [];
+
+      return res.json({
+        response: `Excelente decisión 🙌\n\nVamos paso a paso.\n\n👉 ${preguntas[0]}`
+      });
+    }
+
+    // =============================
+    // 2. SALUDO SOLO SI NO DIJO NADA ÚTIL
     // =============================
     if (user.inicio) {
       user.inicio = false;
 
       return res.json({
         response:
-`Hola 👋 Soy FIO, tu asesor en formulación de proyectos.
+`Hola 👋 Soy FIO.
 
-Puedo ayudarte a:
+Te ayudo a:
 ✔ Crear proyectos paso a paso
 ✔ Mejorar ideas
 ✔ Buscar convocatorias
 
-💡 Solo dime qué quieres hacer o escribe tu idea.
-
-Por ejemplo:
-👉 "Quiero crear un proyecto"
-👉 "Ver convocatorias"`
-      });
-    }
-
-    // =============================
-    // CAMBIO DE MODO GLOBAL
-    // =============================
-    const cambio = esCambioModo(msg);
-
-    if (cambio === "convocatorias") {
-      const conv = await buscarConvocatorias("social");
-
-      return res.json({
-        response: "🔎 Aquí tienes convocatorias disponibles:",
-        data: conv
-      });
-    }
-
-    if (cambio === "proyecto" && !user.modo) {
-      user.modo = "proyecto";
-      user.paso = 0;
-      user.respuestas = [];
-
-      return res.json({
-        response:
-`Perfecto 👌 vamos paso a paso.
-
-👉 ${preguntas[0]}`
-      });
-    }
-
-    // =============================
-    // SI NO HAY MODO → GUIAR
-    // =============================
-    if (!user.modo) {
-      return res.json({
-        response:
-`Cuéntame 👀
-
-¿Quieres crear un proyecto o ver convocatorias?
-
-👉 Ejemplo:
+👉 Escribe:
 "Quiero crear un proyecto"`
       });
     }
 
     // =============================
-    // FLUJO PROYECTO
+    // 3. FLUJO PROYECTO
     // =============================
     if (user.modo === "proyecto") {
 
-      if (!esValida(msg)) {
+      if (!validar(msg)) {
         return res.json({
-          response: "💡 Dame un poco más de detalle para ayudarte mejor"
+          response: "💡 Dame un poco más de detalle"
         });
       }
 
@@ -225,25 +188,30 @@ Por ejemplo:
           response:
 `${mejora}
 
-📊 Vamos avanzando paso a paso
-
 👉 ${preguntas[user.paso]}`
         });
       }
 
       // FINAL
       const proyecto = await llamarIA(`
-Genera un proyecto estructurado:
+Genera proyecto estructurado:
 ${user.respuestas.join("\n")}
 `);
 
-      reset(userId);
+      init(userId);
 
       return res.json({
-        response: "🎉 Proyecto generado:",
+        response: "🎉 Proyecto listo:",
         proyecto
       });
     }
+
+    // =============================
+    // 4. DEFAULT
+    // =============================
+    return res.json({
+      response: "👉 Escribe: 'Quiero crear un proyecto'"
+    });
 
   } catch (error) {
     return res.json({ error: error.message });
@@ -252,5 +220,7 @@ ${user.respuestas.join("\n")}
 
 // =============================
 app.listen(PORT, () => {
+  console.log("Servidor OK en " + PORT);
+});
   console.log("Servidor PRO activo en " + PORT);
 });
