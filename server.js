@@ -1,5 +1,5 @@
-const express = require("express");
-const cors = require("cors");
+import express from "express";
+import cors from "cors";
 
 const app = express();
 app.use(cors());
@@ -20,7 +20,7 @@ function validar(msg) {
 }
 
 // =============================
-// MEJORA DE RESPUESTAS
+// MEJORA RESPUESTAS
 // =============================
 
 function mejorarRespuesta(paso, msg) {
@@ -30,7 +30,7 @@ function mejorarRespuesta(paso, msg) {
     return `Podemos formular el problema así:
 "${texto}."
 
-👉 Debe expresar una situación negativa, concreta y con población afectada.`;
+👉 Debe ser una situación negativa, concreta y con población afectada.`;
   }
 
   if (paso === 2) {
@@ -41,14 +41,14 @@ function mejorarRespuesta(paso, msg) {
   }
 
   if (paso === 3) {
-    return `Ubicación definida:
+    return `Ubicación clara:
 "${texto}"
 
-👉 Sé específico (ciudad, municipio, institución).`;
+👉 Sé específico (municipio, institución).`;
   }
 
   if (paso === 4) {
-    return `Población clara:
+    return `Población definida:
 "${texto}"
 
 👉 Intenta segmentar o cuantificar.`;
@@ -58,7 +58,7 @@ function mejorarRespuesta(paso, msg) {
     return `Evidencia del problema:
 "${texto}"
 
-👉 Ideal incluir datos o cifras.`;
+👉 Ideal si incluyes datos o cifras.`;
   }
 
   return `"${texto}"`;
@@ -120,7 +120,7 @@ app.post("/chat", (req, res) => {
     return res.json({
       response: `Hola, ¿cómo va? Soy FIO, tu asesor de proyectos 🚀
 
-Vamos a formular un proyecto impactante juntos.
+Estoy acá para que juntos formulemos un proyecto impactante.
 
 No te preocupes, yo te guío paso a paso.
 
@@ -136,7 +136,7 @@ No te preocupes, yo te guío paso a paso.
 
 Necesito un poco más de detalle para que esto quede sólido.
 
-Respóndeme mejor y seguimos 👇`
+Responde mejor y seguimos 👇`
     });
   }
 
@@ -145,7 +145,7 @@ Respóndeme mejor y seguimos 👇`
 
   estado[userId].respuestas.push(msg);
 
-  // SIGUIENTE PREGUNTA
+  // SIGUIENTE
   if (paso < preguntas.length) {
     estado[userId].paso++;
 
@@ -161,7 +161,7 @@ ${preguntas[paso]}`
     });
   }
 
-  // RESULTADO FINAL
+  // FINAL
   const r = estado[userId].respuestas;
 
   const proyecto = `
@@ -202,9 +202,7 @@ ${r[10]}
 
 Tu proyecto ya tiene base estructurada.
 
-Ahora pudes organizar tu formato completo y enviarlo.
-
-👉 Dime cómo quieres seguir.
+👉 Dime si quieres llevarlo a marco lógico completo.
 
 ${proyecto}`
   });
