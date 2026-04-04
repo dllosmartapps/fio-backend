@@ -1,6 +1,11 @@
+// =============================
+// FIO BACKEND PRO SaaS
+// =============================
+
 import express from "express";
 import cors from "cors";
 import fetch from "node-fetch";
+
 import { buscarConvocatorias } from "./modules/scraper.js";
 import { hacerMatching } from "./modules/matching.js";
 
@@ -11,8 +16,13 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const SERP_API_KEY = process.env.SERP_API_KEY;
-const WP_API = process.env.WP_API; // https://tusitio.com/wp-json/wp/v2/documentos_fio
+
+// =============================
+// RUTA BASE
+// =============================
+app.get("/", (req, res) => {
+  res.send("FIO backend PRO activo 🚀");
+});
 
 // =============================
 // MEMORIA
@@ -20,36 +30,38 @@ const WP_API = process.env.WP_API; // https://tusitio.com/wp-json/wp/v2/document
 const estado = {};
 
 // =============================
-// BUSCAR EN WORDPRESS (RAG)
+// VALIDACIÓN
 // =============================
-async function buscarWP(query) {
-  if (!WP_API) return "";
+function validar(msg) {
+  return msg && msg.trim().length > 5;
+}
 
-  try {
-    const r = await fetch(`${WP_API}?search=${encodeURIComponent(query)}&per_page=3`);
-    const data = await r.json();
+// =============================
+// MEJORA TIPO CONSULTOR
+// =============================
+function mejorar(paso, msg) {
+  const t = msg.trim();
+  const texto = t.charAt(0).toUpperCase() + t.slice(1);
 
-    return data.map(x => x.content.rendered.replace(/<[^>]+>/g, "")).join("\n");
-  } catch {
-    return "";
+  if (paso === 2) {
+    return `Problema formulado:
+"${texto}"
+
+👉 Debe expresar una situación negativa, con población afectada y sin soluciones.`;
   }
+
+  if (paso === 10) {
+    return `Meta reformulada:
+"${texto}"
+
+👉 Debe ser medible y alcanzable.`;
+  }
+
+  return `"${texto}"`;
 }
 
 // =============================
-// BUSCAR EN INTERNET
-// =============================
-async function buscarWeb(q) {
-  if (!SERP_API_KEY) return "";
-
-  const url = `https://serpapi.com/search.json?q=${q}&api_key=${SERP_API_KEY}`;
-  const r = await fetch(url);
-  const d = await r.json();
-
-  return d.organic_results?.slice(0, 2).map(x => x.snippet).join("\n") || "";
-}
-
-// =============================
-// PREGUNTAS
+// 14 PREGUNTAS
 // =============================
 const preguntas = [
   "¿Cómo se llama el proyecto?",
@@ -69,97 +81,130 @@ const preguntas = [
 ];
 
 // =============================
-// PROMPT BASE (TU AGENTE)
+// LLAMADA A IA
 // =============================
-function construirPrompt(contexto, respuestas, msg) {
-  return `
-Eres un Agente Experto en Formulación de Proyectos.
+async function llamarIA(prompt) {
+  const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model: "openai/gpt-3.5-turbo",
+      messages: [{ role: "user", content: prompt }]
+    })
+  });
 
-Reglas:
-- NO inventas metodologías
-- SOLO usas formatos oficiales y documentos cargados
-- Si hay conflicto, usa el más reciente
-
-Contexto técnico:
-${contexto}
-
-Datos del usuario:
-${JSON.stringify(respuestas)}
-
-Nueva entrada:
-${msg}
-
-Debes continuar con la secuencia:
-1. Árbol de problemas
-2. Árbol de objetivos
-3. Alternativas
-4. Formulación completa (según formato)
-5. Validación lógica
-
-Respuesta técnica, estructurada y profesional.
-`;
+  const d = await r.json();
+  return d.choices?.[0]?.message?.content || "Error IA";
 }
 
 // =============================
-// CHAT
+// ENDPOINT PRINCIPAL
 // =============================
 app.post("/chat", async (req, res) => {
-  const { userId, msg } = req.body;
-  const uid = userId || "default";
+  const { userId = "default", msg = "" } = req.body;
 
-  if (!estado[uid]) {
-    estado[uid] = { paso: 0, respuestas: [] };
+  if (!estado[userId]) {
+    estado[userId] = { paso: 0, respuestas: [] };
   }
 
-  let paso = estado[uid].paso;
+  let paso = estado[userId].paso;
 
   // =============================
-  // FASE 1: PREGUNTAS
+  // INICIO
   // =============================
-  if (paso < preguntas.length) {
-    if (paso > 0) estado[uid].respuestas.push(msg);
-
-    estado[uid].paso++;
+  if (paso === 0) {
+    estado[userId].paso = 1;
 
     return res.json({
-      response: `(${Math.round((paso / 14) * 100)}%) 
+      response: `Hola 👋 Soy FIO, tu consultor en formulación de proyectos.
+
+Vamos a construir un proyecto sólido paso a paso.
+
+(7%) 👉 ${preguntas[0]}`
+    });
+  }
+
+  // =============================
+  // VALIDACIÓN
+  // =============================
+  if (!validar(msg)) {
+    return res.json({
+      response: "Necesito un poco más de detalle para que esto quede bien formulado 👀"
+    });
+  }
+
+  estado[userId].respuestas.push(msg);
+
+  const mejora = mejorar(paso, msg);
+
+  // =============================
+  // SIGUIENTE PREGUNTA
+  // =============================
+  if (paso < preguntas.length) {
+    estado[userId].paso++;
+
+    return res.json({
+      response: `(${paso * 7}%) 👍
+
+${mejora}
 
 👉 ${preguntas[paso]}`
     });
   }
 
   // =============================
-  // FASE 2: IA + RAG
+  // GENERAR PROYECTO COMPLETO
   // =============================
-  const respuestas = estado[uid].respuestas;
+  const r = estado[userId].respuestas;
 
-  const contextoWP = await buscarWP(msg);
-  const contextoWeb = await buscarWeb(msg);
+  const promptFinal = `
+Eres un experto en formulación de proyectos usando metodología Marco Lógico, MGA y ODS.
 
-  const contexto = contextoWP + "\n" + contextoWeb;
+Con esta información:
 
-  const prompt = construirPrompt(contexto, respuestas, msg);
+${r.join("\n")}
 
-  const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      model: "openai/gpt-4o-mini",
-      messages: [{ role: "user", content: prompt }]
-    })
-  });
+Construye:
 
-  const d = await r.json();
+1. Árbol de problemas
+2. Árbol de objetivos
+3. Alternativas
+4. Proyecto completo estructurado
 
+Usa redacción técnica, tablas y coherencia total.
+`;
+
+  const resultado = await llamarIA(promptFinal);
+
+  // =============================
+  // MATCHING CONVOCATORIAS
+  // =============================
+  const proyectoData = {
+    sector: "social",
+    ods: ["4", "17"],
+    presupuesto: 4000000000,
+    poblacion: "organizaciones"
+  };
+
+  const convocatorias = await buscarConvocatorias(proyectoData.sector);
+  const matches = hacerMatching(proyectoData, convocatorias);
+
+  // RESET
+  estado[userId] = { paso: 0, respuestas: [] };
+
+  // =============================
+  // RESPUESTA FINAL
+  // =============================
   return res.json({
-    response: d.choices?.[0]?.message?.content || "Error IA"
+    proyecto: resultado,
+    convocatorias: matches
   });
 });
 
 // =============================
 app.listen(PORT, () => {
-  console.log("FIO PRO corriendo 🚀 " + PORT);
+  console.log("Servidor FIO PRO en puerto " + PORT);
 });
