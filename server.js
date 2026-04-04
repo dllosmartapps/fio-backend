@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import fetch from "node-fetch";
+import fs from "fs";
 
 const app = express();
 app.use(cors());
@@ -10,9 +11,23 @@ const PORT = process.env.PORT || 3000;
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 
 // =============================
-// MEMORIA
+// DB LOCAL (PERSISTENCIA)
 // =============================
-const estado = {};
+const DB_PATH = "./data/estado.json";
+
+function cargarEstado() {
+  try {
+    return JSON.parse(fs.readFileSync(DB_PATH, "utf-8"));
+  } catch {
+    return {};
+  }
+}
+
+function guardarEstado(data) {
+  fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
+}
+
+let estado = cargarEstado();
 
 // =============================
 // ESTADOS
@@ -51,6 +66,7 @@ function init(userId) {
     paso: 0,
     respuestas: []
   };
+  guardarEstado(estado);
 }
 
 // =============================
@@ -58,18 +74,27 @@ function getMessage(body) {
   return (body.msg || body.message || body.text || "").toString();
 }
 
+function limpiarTexto(msg) {
+  return msg.trim();
+}
+
 // =============================
 function detectarIntencion(msg = "") {
   const m = msg.toLowerCase();
 
   if (m.includes("convocatoria")) return STATES.CONVOCATORIAS;
-  if (m.includes("proyecto") || m.includes("crear")) return STATES.PROYECTO;
+
+  if (
+    m.includes("proyecto") ||
+    m.includes("crear") ||
+    m.includes("formular")
+  ) {
+    return STATES.PROYECTO;
+  }
 
   return null;
 }
 
-// =============================
-// VALIDACIÓN BÁSICA
 // =============================
 function validarBasico(msg) {
   if (!msg || msg.length < 5) return "debil";
@@ -78,16 +103,32 @@ function validarBasico(msg) {
 }
 
 // =============================
-// CONTEXTO WORDPRESS
+function esPregunta(msg) {
+  const m = msg.toLowerCase();
+
+  return (
+    msg.includes("?") ||
+    m.includes("como") ||
+    m.includes("ejemplo") ||
+    m.includes("que debe") ||
+    m.includes("explica")
+  );
+}
+
+// =============================
+// WORDPRESS CONTEXTO
 // =============================
 async function obtenerContextoWP() {
   try {
-    const r = await fetch("https://tusitio.com/wp-json/wp/v2/posts?per_page=3");
+    const r = await fetch("https://tusitio.com/wp-json/wp/v2/posts?per_page=5");
     const data = await r.json();
 
     return data
-      .map(p => `${p.title.rendered} ${p.excerpt.rendered}`)
-      .join("\n");
+      .map(p =>
+        p.content.rendered.replace(/<[^>]*>?/gm, "")
+      )
+      .join("\n")
+      .slice(0, 3000);
 
   } catch {
     return "";
@@ -95,7 +136,7 @@ async function obtenerContextoWP() {
 }
 
 // =============================
-// IA ASESOR
+// IA ASESOR (CONTROLADO)
 // =============================
 async function asesorIA(pregunta, respuesta) {
   if (!OPENROUTER_API_KEY) return null;
@@ -117,18 +158,21 @@ async function asesorIA(pregunta, respuesta) {
             content: `
 Eres FIO, consultor experto en formulación de proyectos.
 
+REGLAS:
+- NO hagas preguntas
+- SOLO mejora la respuesta
+- NO cambies el flujo
+
 Usa este conocimiento:
 ${contextoWP}
 
-Responde SIEMPRE así:
+Formato obligatorio:
 
 👉 Vas muy bien 🔥  
 👉 Podemos formularlo mejor así:
 "texto mejorado"
 
 👉 Explicación breve
-
-Luego guía al siguiente paso.
 `
           },
           {
@@ -151,7 +195,7 @@ Respuesta: ${respuesta}
 }
 
 // =============================
-// GENERADOR FINAL
+// GENERACIÓN FINAL
 // =============================
 async function generarProyecto(respuestas) {
   if (!OPENROUTER_API_KEY) return respuestas.join("\n");
@@ -169,14 +213,14 @@ async function generarProyecto(respuestas) {
           {
             role: "user",
             content: `
-Construye:
+Genera:
 
 1. Árbol de problemas
 2. Árbol de objetivos
 3. Alternativas
 4. Marco lógico
 
-Con base en:
+Basado en:
 ${respuestas.join("\n")}
 `
           }
@@ -185,7 +229,7 @@ ${respuestas.join("\n")}
     });
 
     const d = await r.json();
-    return d?.choices?.[0]?.message?.content || "Error generando";
+    return d?.choices?.[0]?.message?.content || "Error IA";
 
   } catch {
     return "Error IA";
@@ -194,25 +238,28 @@ ${respuestas.join("\n")}
 
 // =============================
 app.get("/", (req, res) => {
-  res.send("FIO PRO 🚀");
+  res.send("FIO SaaS PRO 🚀");
 });
 
 // =============================
 app.post("/chat", async (req, res) => {
   try {
-    let userId = req.body.userId || "global";
-    let msg = getMessage(req.body);
+    let userId = req.body.userId || "global-user";
+    let msg = limpiarTexto(getMessage(req.body));
 
     if (!estado[userId]) init(userId);
-    const user = estado[userId];
 
+    const user = estado[userId];
     const intent = detectarIntencion(msg);
 
-    // CAMBIO DE MODO
-    if (intent === STATES.PROYECTO) {
+    // =============================
+    // CAMBIO DE MODO (CONTROLADO)
+    // =============================
+    if (intent === STATES.PROYECTO && user.state !== STATES.PROYECTO) {
       user.state = STATES.PROYECTO;
       user.paso = 0;
       user.respuestas = [];
+      guardarEstado(estado);
 
       return res.json({
         response: `Perfecto 👌 iniciemos.\n\n👉 ${preguntas[0]}`
@@ -221,15 +268,19 @@ app.post("/chat", async (req, res) => {
 
     if (intent === STATES.CONVOCATORIAS) {
       user.state = STATES.CONVOCATORIAS;
+      guardarEstado(estado);
 
       return res.json({
         response: "🔎 Convocatorias (siguiente fase scraping real)"
       });
     }
 
+    // =============================
     // INICIO
+    // =============================
     if (user.state === STATES.INICIO) {
       user.state = STATES.ESPERANDO;
+      guardarEstado(estado);
 
       return res.json({
         response:
@@ -242,7 +293,9 @@ Te ayudo a formular proyectos paso a paso.
       });
     }
 
+    // =============================
     // ESPERANDO
+    // =============================
     if (user.state === STATES.ESPERANDO) {
       return res.json({
         response:
@@ -250,15 +303,26 @@ Te ayudo a formular proyectos paso a paso.
       });
     }
 
+    // =============================
     // PROYECTO
+    // =============================
     if (user.state === STATES.PROYECTO) {
 
       const preguntaActual = preguntas[user.paso];
 
-      // evitar romper flujo
-      if (msg.includes("?")) {
+      if (esPregunta(msg)) {
         return res.json({
-          response: `👉 Vamos paso a paso.\n\nResponde:\n${preguntaActual}`
+          response:
+`💡 Buena pregunta 👌
+
+👉 Para "${preguntaActual}" incluye:
+- contexto
+- población
+- ubicación
+- impacto
+
+👉 Ahora responde:
+${preguntaActual}`
         });
       }
 
@@ -272,16 +336,18 @@ Te ayudo a formular proyectos paso a paso.
 👉 ${preguntaActual}
 
 Ejemplo:
-Describe con contexto, población y lugar`
+Describe con contexto claro, población y problema`
         });
       }
 
       const mejora = await asesorIA(preguntaActual, msg);
 
       user.respuestas.push(msg);
+      guardarEstado(estado);
 
       if (user.paso < preguntas.length - 1) {
         user.paso++;
+        guardarEstado(estado);
 
         return res.json({
           response:
@@ -299,7 +365,7 @@ Describe con contexto, población y lugar`
       init(userId);
 
       return res.json({
-        response: "🎉 Proyecto formulado",
+        response: "🎉 Tu proyecto ha sido formulado correctamente",
         proyecto: resultado
       });
     }
@@ -308,12 +374,14 @@ Describe con contexto, población y lugar`
       response: "👉 Escribe: 'Quiero crear un proyecto'"
     });
 
-  } catch (e) {
-    console.error(e);
-    return res.status(500).json({ error: "Error interno" });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({
+      error: "Error interno del servidor"
+    });
   }
 });
 
 app.listen(PORT, () => {
-  console.log("FIO PRO corriendo en puerto " + PORT);
+  console.log("Servidor SaaS funcionando en puerto " + PORT);
 });
