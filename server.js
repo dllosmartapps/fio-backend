@@ -1,8 +1,3 @@
-// =============================
-// FIO BACKEND PRO - FINAL
-// Compatible: Node.js ES Modules + Deploy
-// =============================
-
 import express from "express";
 import cors from "cors";
 
@@ -11,26 +6,26 @@ app.use(cors());
 app.use(express.json());
 
 // =============================
-// RUTA BASE (IMPORTANTE PARA DEPLOY)
+// RUTA BASE
 // =============================
 app.get("/", (req, res) => {
   res.send("FIO backend activo 🚀");
 });
 
 // =============================
-// MEMORIA POR USUARIO
+// MEMORIA
 // =============================
 const estado = {};
 
 // =============================
-// VALIDACIÓN INTELIGENTE
+// VALIDACIÓN
 // =============================
 function validar(msg) {
   return msg && msg.trim().length > 5;
 }
 
 // =============================
-// MEJORA DE RESPUESTAS (FORMULACIÓN)
+// MEJORA RESPUESTAS
 // =============================
 function mejorar(paso, msg) {
   const t = msg.trim();
@@ -68,7 +63,7 @@ function mejorar(paso, msg) {
 }
 
 // =============================
-// FLUJO DE FORMULACIÓN
+// FLUJO
 // =============================
 const preguntas = [
   "¿Cómo se llama el proyecto?",
@@ -79,25 +74,22 @@ const preguntas = [
 ];
 
 // =============================
-// ENDPOINT PRINCIPAL
+// ENDPOINT
 // =============================
 app.post("/chat", (req, res) => {
   const { userId, msg } = req.body;
 
- const uid = userId || "default";
+  const uid = userId || "default";
+
+  if (!estado[uid]) {
+    estado[uid] = { paso: 0, respuestas: [] };
   }
 
-  if (!estado[userId]) {
-    estado[userId] = { paso: 0, respuestas: [] };
-  }
+  let paso = estado[uid].paso;
 
-  let paso = estado[userId].paso;
-
-  // =============================
-  // BIENVENIDA CONTROLADA
-  // =============================
+  // BIENVENIDA
   if (paso === 0) {
-    estado[userId].paso = 1;
+    estado[uid].paso = 1;
 
     return res.json({
       response: `Hola, ¿cómo va? Soy FIO 👋
@@ -111,9 +103,7 @@ No te preocupes, vamos paso a paso.
     });
   }
 
-  // =============================
   // VALIDACIÓN
-  // =============================
   if (!validar(msg)) {
     return res.json({
       response: `Hey, pilas 👀
@@ -122,21 +112,15 @@ Dame un poco más de detalle para que esto quede sólido.`
     });
   }
 
-  // =============================
-  // GUARDAR RESPUESTA
-  // =============================
-  estado[userId].respuestas.push(msg);
+  // GUARDAR
+  estado[uid].respuestas.push(msg);
 
-  // =============================
-  // MEJORA INTELIGENTE
-  // =============================
+  // MEJORA
   const mejora = mejorar(paso, msg);
 
-  // =============================
   // SIGUIENTE PASO
-  // =============================
   if (paso < preguntas.length) {
-    estado[userId].paso++;
+    estado[uid].paso++;
 
     return res.json({
       response: `(${paso * 20}%) Vas muy bien 🔥
@@ -148,10 +132,8 @@ ${preguntas[paso]}`
     });
   }
 
-  // =============================
   // RESULTADO FINAL
-  // =============================
-  const r = estado[userId].respuestas;
+  const r = estado[uid].respuestas;
 
   const proyecto = `
 📄 PROYECTO FORMULADO
@@ -173,7 +155,7 @@ ${r[4]}
 `;
 
   // RESET
-  estado[userId] = { paso: 0, respuestas: [] };
+  estado[uid] = { paso: 0, respuestas: [] };
 
   return res.json({
     response: `(100%) Lo logramos 🚀🔥
@@ -187,7 +169,7 @@ ${proyecto}`
 });
 
 // =============================
-// PUERTO DINÁMICO (CLAVE DEPLOY)
+// PUERTO
 // =============================
 const PORT = process.env.PORT || 3000;
 
