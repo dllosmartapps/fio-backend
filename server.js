@@ -13,19 +13,19 @@ const PORT = process.env.PORT || 3000;
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 
 // =============================
-// TEST
+// HEALTH
 // =============================
 app.get("/", (req, res) => {
-  res.send("FIO PRO activo 🚀");
+  res.send("FIO SaaS activo 🚀");
 });
 
 // =============================
-// MEMORIA POR USUARIO
+// MEMORIA (ESCALAR → REDIS)
 // =============================
 const estado = {};
 
 // =============================
-// 14 PREGUNTAS
+// PREGUNTAS
 // =============================
 const preguntas = [
   "¿Cómo se llama el proyecto?",
@@ -45,11 +45,17 @@ const preguntas = [
 ];
 
 // =============================
-// VALIDACIÓN
+// VALIDACIÓN FUERTE
 // =============================
 function validarRespuesta(texto) {
   if (!texto) return false;
-  if (texto.trim().length < 3) return false;
+  const limpio = texto.toString().trim();
+
+  if (limpio.length < 5) return false;
+
+  const basura = ["1", "ok", "si", "no", "x"];
+  if (basura.includes(limpio.toLowerCase())) return false;
+
   return true;
 }
 
@@ -57,20 +63,35 @@ function validarRespuesta(texto) {
 // DETECTAR INTENCIÓN
 // =============================
 function detectarModo(msg = "") {
-  const m = msg.toLowerCase();
+  if (!msg) return null;
 
-  if (m.includes("proyecto")) return "proyecto";
-  if (m.includes("convocatoria")) return "convocatorias";
+  const m = msg.toLowerCase().trim();
+
+  if (
+    m.includes("proyecto") ||
+    m.includes("crear") ||
+    m.includes("formular")
+  ) return "proyecto";
+
+  if (
+    m.includes("convocatoria") ||
+    m.includes("financiacion") ||
+    m.includes("fondos")
+  ) return "convocatorias";
 
   return null;
 }
 
 // =============================
-// LLAMADA A IA (OPENROUTER)
+// IA BASE
 // =============================
 async function llamarIA(prompt) {
   try {
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    if (!OPENROUTER_API_KEY) {
+      return "⚠️ Falta API KEY";
+    }
+
+    const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${OPENROUTER_API_KEY}`,
@@ -78,66 +99,78 @@ async function llamarIA(prompt) {
       },
       body: JSON.stringify({
         model: "openai/gpt-3.5-turbo",
-        messages: [{ role: "user", content: prompt }]
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.6
       })
     });
 
-    const data = await response.json();
-
-    return data?.choices?.[0]?.message?.content || "Sin respuesta IA";
-  } catch (error) {
+    const d = await r.json();
+    return d?.choices?.[0]?.message?.content || "Sin respuesta IA";
+  } catch (e) {
+    console.error(e);
     return "Error IA";
   }
 }
 
 // =============================
-// ASESOR EXPERTO
+// ASESOR
 // =============================
-async function mejorarRespuesta(pregunta, respuestaUsuario) {
+async function asesor(pregunta, respuesta) {
   const prompt = `
-Eres un experto en formulación de proyectos (Marco Lógico, MGA).
+Eres experto en formulación de proyectos (MGA y Marco Lógico).
 
-El usuario respondió:
-"${respuestaUsuario}"
+Respuesta usuario:
+"${respuesta}"
 
-La pregunta fue:
+Pregunta:
 "${pregunta}"
 
-Tareas:
-1. Evalúa la calidad de la respuesta
-2. Mejórala con redacción técnica
-3. Enséñale brevemente cómo mejorarla
+Corrige, mejora y enseña.
 
-Formato EXACTO:
+Formato:
 
 👉 Vas bien 🔥
-👉 Podemos formularlo así:
-"Texto mejorado"
+👉 Mejor así:
+"texto mejorado"
 
-👉 Explicación breve (máx 1 línea)
+👉 Explicación breve
 `;
 
   return await llamarIA(prompt);
 }
 
 // =============================
-// GENERAR PROYECTO FINAL
+// ÁRBOL DE PROBLEMAS
 // =============================
-async function generarProyecto(respuestas) {
+async function arbolProblemas(respuestas) {
   const prompt = `
-Actúa como experto en formulación de proyectos bajo metodología Marco Lógico y MGA.
+Construye un árbol de problemas con:
 
-Construye un proyecto estructurado con:
+- Problema central
+- 3 causas
+- 3 efectos
 
-- Problema
-- Objetivo general
-- Objetivos específicos
-- Justificación
-- Resultados esperados
+Basado en:
+${respuestas.join("\n")}
 
-Usa redacción técnica, clara y profesional.
+Formato claro.
+`;
 
-Datos del usuario:
+  return await llamarIA(prompt);
+}
+
+// =============================
+// ÁRBOL DE OBJETIVOS
+// =============================
+async function arbolObjetivos(respuestas) {
+  const prompt = `
+Convierte el problema en árbol de objetivos:
+
+- Objetivo central
+- Medios
+- Fines
+
+Basado en:
 ${respuestas.join("\n")}
 `;
 
@@ -145,46 +178,79 @@ ${respuestas.join("\n")}
 }
 
 // =============================
-// CHAT PRINCIPAL
+// ALTERNATIVAS
+// =============================
+async function alternativas(respuestas) {
+  const prompt = `
+Propón 3 alternativas de solución viables.
+
+Basado en:
+${respuestas.join("\n")}
+`;
+
+  return await llamarIA(prompt);
+}
+
+// =============================
+// MARCO LÓGICO
+// =============================
+async function marcoLogico(respuestas) {
+  const prompt = `
+Construye una matriz de marco lógico con:
+
+- Fin
+- Propósito
+- Componentes
+- Actividades
+- Indicadores
+
+Basado en:
+${respuestas.join("\n")}
+
+Formato tabla.
+`;
+
+  return await llamarIA(prompt);
+}
+
+// =============================
+// RESET
+// =============================
+function resetUser(id) {
+  estado[id] = {
+    modo: null,
+    paso: 0,
+    respuestas: []
+  };
+}
+
+// =============================
+// CHAT
 // =============================
 app.post("/chat", async (req, res) => {
   try {
     const { userId = "default", msg = "" } = req.body;
 
-    // iniciar usuario
-    if (!estado[userId]) {
-      estado[userId] = {
-        modo: null,
-        paso: 0,
-        respuestas: []
-      };
-    }
+    if (!estado[userId]) resetUser(userId);
 
     const user = estado[userId];
 
     // =============================
-    // DETECTAR MODO
+    // INICIO
     // =============================
     if (!user.modo) {
       const modo = detectarModo(msg);
 
       if (modo === "proyecto") {
         user.modo = "proyecto";
-        user.paso = 0;
-        user.respuestas = [];
-
         return res.json({
-          response: `Perfecto 👌 vamos a formular tu proyecto paso a paso.\n\n👉 ${preguntas[0]}`
+          response: `Iniciemos tu proyecto 🚀\n\n👉 ${preguntas[0]}`
         });
       }
 
       if (modo === "convocatorias") {
-        const convocatorias = await buscarConvocatorias("social");
-
-        return res.json({
-          response: "Aquí tienes algunas convocatorias:",
-          data: convocatorias
-        });
+        const conv = await buscarConvocatorias("social");
+        return res.json({ response: "Convocatorias:", data: conv });
       }
 
       return res.json({
@@ -193,66 +259,52 @@ app.post("/chat", async (req, res) => {
     }
 
     // =============================
-    // MODO PROYECTO
+    // FLUJO PROYECTO
     // =============================
     if (user.modo === "proyecto") {
 
-      // validar
       if (!validarRespuesta(msg)) {
         return res.json({
-          response: "Necesito más detalle para ayudarte bien 👀"
+          response: "Respuesta muy débil 👀 dame más detalle"
         });
       }
 
-      const preguntaActual = preguntas[user.paso];
+      const mejora = await asesor(preguntas[user.paso], msg);
 
-      // mejorar respuesta con IA
-      const mejora = await mejorarRespuesta(preguntaActual, msg);
-
-      // guardar respuesta
       user.respuestas.push(msg);
 
-      // avanzar preguntas
       if (user.paso < preguntas.length - 1) {
         user.paso++;
 
-        const progreso = Math.round((user.paso / preguntas.length) * 100);
-
         return res.json({
-          response: `${mejora}\n\n✅ ${progreso}% completado\n👉 ${preguntas[user.paso]}`
+          response: `${mejora}\n\n📊 ${Math.round((user.paso / preguntas.length) * 100)}%\n👉 ${preguntas[user.paso]}`
         });
       }
 
       // =============================
-      // GENERAR PROYECTO
+      // GENERACIÓN SaaS
       // =============================
-      const proyecto = await generarProyecto(user.respuestas);
+      const problemas = await arbolProblemas(user.respuestas);
+      const objetivos = await arbolObjetivos(user.respuestas);
+      const alt = await alternativas(user.respuestas);
+      const marco = await marcoLogico(user.respuestas);
 
-      // =============================
-      // MATCHING
-      // =============================
-      const convocatorias = await buscarConvocatorias("social");
+      const conv = await buscarConvocatorias("social");
+      const match = hacerMatching({ sector: "social" }, conv);
 
-      const matches = hacerMatching(
-        { sector: "social" },
-        convocatorias
-      );
-
-      // reset usuario
-      estado[userId] = {
-        modo: null,
-        paso: 0,
-        respuestas: []
-      };
+      resetUser(userId);
 
       return res.json({
-        proyecto,
-        convocatorias: matches
+        arbol_problemas: problemas,
+        arbol_objetivos: objetivos,
+        alternativas: alt,
+        marco_logico: marco,
+        convocatorias: match
       });
     }
 
   } catch (error) {
-    return res.json({
+    return res.status(500).json({
       error: error.message
     });
   }
@@ -260,5 +312,5 @@ app.post("/chat", async (req, res) => {
 
 // =============================
 app.listen(PORT, () => {
-  console.log("Servidor corriendo en puerto " + PORT);
+  console.log("Servidor SaaS en puerto " + PORT);
 });
