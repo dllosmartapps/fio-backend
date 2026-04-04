@@ -1,5 +1,5 @@
 // =============================
-// FIO BACKEND PRO - ESTABLE
+// FIO BACKEND PRO FINAL (ESTABLE)
 // =============================
 
 import express from "express";
@@ -20,36 +20,81 @@ const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 // TEST
 // =============================
 app.get("/", (req, res) => {
-  res.send("FIO backend funcionando 🚀");
+  res.send("FIO PRO activo 🚀");
 });
 
 // =============================
-// MEMORIA SIMPLE
+// MEMORIA
 // =============================
 const estado = {};
 
 // =============================
-// PREGUNTAS (simplificado estable)
+// PREGUNTAS REALES (14)
 // =============================
 const preguntas = [
   "¿Cómo se llama el proyecto?",
-  "¿Cuál es el problema principal?",
+  "Describe claramente el problema (situación negativa, población afectada)",
   "¿Dónde se desarrolla?",
   "¿A quién beneficia?",
-  "¿Qué resultados esperas?"
+  "¿Qué evidencias tienes?",
+  "¿Tema del proyecto?",
+  "¿Duración estimada?",
+  "¿Recursos disponibles?",
+  "¿Presupuesto disponible?",
+  "¿Qué metas esperas lograr?",
+  "¿A qué ODS se alinea?",
+  "¿Formato institucional?",
+  "¿Normas específicas?",
+  "¿Deseas que proponga alternativas?"
 ];
 
 // =============================
-// VALIDACIÓN SIMPLE
+// VALIDACIÓN INTELIGENTE
 // =============================
-function validar(msg) {
-  return msg && msg.trim().length > 3;
+function validarRespuesta(paso, msg) {
+  if (!msg || msg.trim().length < 5) {
+    return "Necesito más detalle para formular correctamente 👀";
+  }
+
+  if (paso === 1 && msg.length < 15) {
+    return "El problema debe ser más claro, con población afectada.";
+  }
+
+  if (paso === 9 && msg.toLowerCase().includes("no se")) {
+    return "Las metas deben ser claras y medibles.";
+  }
+
+  return null;
 }
 
 // =============================
-// IA (SEGURA)
+// MEJORA DE TEXTO
 // =============================
-async function llamarIA(texto) {
+function mejorarTexto(paso, msg) {
+  const t = msg.trim();
+  const texto = t.charAt(0).toUpperCase() + t.slice(1);
+
+  if (paso === 1) {
+    return `Problema mejor formulado:
+"${texto}"
+
+👉 Debe ser negativo, concreto y sin soluciones.`;
+  }
+
+  if (paso === 9) {
+    return `Meta reformulada:
+"${texto}"
+
+👉 Debe ser medible.`;
+  }
+
+  return `"${texto}"`;
+}
+
+// =============================
+// IA
+// =============================
+async function llamarIA(prompt) {
   try {
     const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
@@ -59,14 +104,26 @@ async function llamarIA(texto) {
       },
       body: JSON.stringify({
         model: "openai/gpt-3.5-turbo",
-        messages: [{ role: "user", content: texto }]
+        messages: [{ role: "user", content: prompt }]
       })
     });
 
     const d = await r.json();
-    return d.choices?.[0]?.message?.content || "Sin respuesta IA";
+    return d.choices?.[0]?.message?.content || "Error IA";
   } catch (e) {
-    return "Error conectando con IA";
+    return "Error IA";
+  }
+}
+
+// =============================
+// SCRAPING CONTEXTO
+// =============================
+async function obtenerContexto(msg) {
+  try {
+    const data = await buscarConvocatorias(msg);
+    return data.map(x => x.descripcion).join("\n");
+  } catch {
+    return "";
   }
 }
 
@@ -77,12 +134,8 @@ app.post("/chat", async (req, res) => {
   try {
     const { userId = "default", msg = "" } = req.body;
 
-    // crear memoria
     if (!estado[userId]) {
-      estado[userId] = {
-        paso: 0,
-        respuestas: []
-      };
+      estado[userId] = { paso: 0, respuestas: [] };
     }
 
     let paso = estado[userId].paso;
@@ -94,73 +147,85 @@ app.post("/chat", async (req, res) => {
       estado[userId].paso = 1;
 
       return res.json({
-        response: `Hola 👋 Soy FIO.
+        response: `Hola 👋 Soy FIO, tu consultor experto en proyectos.
 
-Vamos a construir tu proyecto paso a paso.
+Vamos a construir un proyecto sólido paso a paso.
 
 👉 ${preguntas[0]}`
       });
     }
 
     // =============================
-    // VALIDACIÓN
+    // VALIDAR
     // =============================
-    if (!validar(msg)) {
-      return res.json({
-        response: "Dame un poco más de detalle 👀"
-      });
+    const errorValidacion = validarRespuesta(paso, msg);
+    if (errorValidacion) {
+      return res.json({ response: errorValidacion });
     }
 
-    // guardar respuesta
     estado[userId].respuestas.push(msg);
 
+    const mejora = mejorarTexto(paso, msg);
+
     // =============================
-    // SIGUIENTE PREGUNTA
+    // SIGUIENTE PASO
     // =============================
     if (paso < preguntas.length) {
       estado[userId].paso++;
 
       return res.json({
-        response: `Perfecto 👍
+        response: `(${Math.round((paso / preguntas.length) * 100)}%) 👍
+
+${mejora}
 
 👉 ${preguntas[paso]}`
       });
     }
 
     // =============================
-    // GENERAR PROYECTO
+    // GENERAR PROYECTO COMPLETO
     // =============================
     const respuestas = estado[userId].respuestas;
 
+    const contexto = await obtenerContexto(respuestas[1]);
+
     const prompt = `
-Eres un experto en formulación de proyectos.
+Eres un experto en formulación de proyectos (Marco Lógico, MGA, ODS).
 
-Con esta información:
-
+Información del usuario:
 ${respuestas.join("\n")}
 
-Genera un proyecto estructurado con:
-- problema
-- objetivos
-- solución
-- resultados
+Contexto real:
+${contexto}
+
+Genera:
+
+1. Árbol de problemas
+2. Árbol de objetivos
+3. Alternativas
+4. Proyecto completo estructurado
+5. Indicadores
+6. Cronograma
+7. Presupuesto
+
+Debe ser profesional, coherente y técnico.
 `;
 
     const resultado = await llamarIA(prompt);
 
     // =============================
-    // MATCHING
+    // MATCHING CONVOCATORIAS
     // =============================
     const proyectoData = {
       sector: "social",
-      ods: ["4"],
+      ods: ["4", "17"],
       presupuesto: 100000000
     };
 
     const convocatorias = await buscarConvocatorias("social");
     const matches = hacerMatching(proyectoData, convocatorias);
 
-    // reset memoria
+    // RESET
     estado[userId] = { paso: 0, respuestas: [] };
 
     // =============================
@@ -181,5 +246,5 @@ Genera un proyecto estructurado con:
 
 // =============================
 app.listen(PORT, () => {
-  console.log("Servidor en puerto " + PORT);
+  console.log("FIO PRO corriendo en puerto " + PORT);
 });
