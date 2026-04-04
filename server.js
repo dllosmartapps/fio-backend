@@ -30,12 +30,30 @@ async function buscarDatos(q){
 // 🌐 LEER WORDPRESS
 async function obtenerContenidoWP() {
   try {
-    const res = await fetch(`${process.env.WP_URL}/wp-json/wp/v2/posts?per_page=10`);
-    const data = await res.json();
+    const base = process.env.WP_URL;
 
-    return data
-      .map(p => p.title.rendered + ": " + p.content.rendered.replace(/<[^>]+>/g, ""))
-      .join("\n\n");
+    const [proyectos, metodologias, convocatorias] = await Promise.all([
+      fetch(`${base}/wp-json/wp/v2/posts?categories=1&per_page=5`).then(r=>r.json()),
+      fetch(`${base}/wp-json/wp/v2/posts?categories=2&per_page=5`).then(r=>r.json()),
+      fetch(`${base}/wp-json/wp/v2/posts?categories=3&per_page=5`).then(r=>r.json())
+    ]);
+
+    const limpiar = (arr) =>
+      arr.map(p =>
+        p.title.rendered + ": " +
+        p.content.rendered.replace(/<[^>]+>/g, "")
+      ).join("\n\n");
+
+    return `
+PROYECTOS:
+${limpiar(proyectos)}
+
+METODOLOGÍAS:
+${limpiar(metodologias)}
+
+CONVOCATORIAS:
+${limpiar(convocatorias)}
+`;
   } catch (e) {
     return "";
   }
