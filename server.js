@@ -84,8 +84,7 @@ const preguntas = [
 app.post("/chat", (req, res) => {
   const { userId, msg } = req.body;
 
-  if (!userId) {
-    return res.json({ response: "Falta userId" });
+ const uid = userId || "default";
   }
 
   if (!estado[userId]) {
