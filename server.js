@@ -15,20 +15,15 @@ const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const estado = {};
 
 // =============================
-// PROMPT MAESTRO
+// ESTADOS
 // =============================
-const SYSTEM_PROMPT = `
-Eres FIO, un asesor experto en formulación de proyectos.
-
-Debes:
-- Guiar paso a paso
-- Hacer preguntas una por una
-- Corregir respuestas
-- Ser claro, humano y profesional
-
-Nunca digas "no entiendo".
-Siempre ayuda y guía.
-`;
+const STATES = {
+  INICIO: "inicio",
+  ESPERANDO: "esperando_intencion",
+  PROYECTO: "modo_proyecto",
+  CONVOCATORIAS: "modo_convocatorias",
+  FINAL: "finalizado"
+};
 
 // =============================
 // PREGUNTAS
@@ -38,10 +33,10 @@ const preguntas = [
   "¿Cuál es el problema principal?",
   "¿Dónde se desarrolla?",
   "¿A quién beneficia?",
-  "¿Qué evidencias tienes del problema?",
-  "¿Cuál es el tema?",
-  "¿Duración estimada?",
-  "¿Recursos disponibles?",
+  "¿Qué evidencias tienes?",
+  "¿Tema del proyecto?",
+  "¿Duración?",
+  "¿Recursos?",
   "¿Presupuesto?",
   "¿Metas?",
   "¿ODS?",
@@ -55,31 +50,32 @@ const preguntas = [
 // =============================
 function init(userId) {
   estado[userId] = {
-    modo: null,
+    state: STATES.INICIO,
     paso: 0,
-    respuestas: [],
-    inicio: true
+    respuestas: []
   };
 }
 
 // =============================
-// DETECTAR INTENCIÓN
+// DETECTAR INTENCIÓN GLOBAL
 // =============================
-function detectarModo(msg = "") {
+function detectarIntencion(msg = "") {
   const m = msg.toLowerCase();
 
-  if (m.includes("convocatoria")) return "convocatorias";
-  if (m.includes("proyecto")) return "proyecto";
+  if (m.includes("convocatoria")) return STATES.CONVOCATORIAS;
+  if (m.includes("proyecto") || m.includes("crear")) return STATES.PROYECTO;
 
   return null;
 }
 
 // =============================
-// IA (OPENROUTER)
+// IA
 // =============================
-async function llamarIA(userMsg, contexto = "") {
+async function llamarIA(prompt) {
   try {
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    if (!OPENROUTER_API_KEY) return "";
+
+    const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${OPENROUTER_API_KEY}`,
@@ -87,18 +83,14 @@ async function llamarIA(userMsg, contexto = "") {
       },
       body: JSON.stringify({
         model: "openai/gpt-3.5-turbo",
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: contexto + "\n\nUsuario: " + userMsg }
-        ]
+        messages: [{ role: "user", content: prompt }]
       })
     });
 
-    const data = await response.json();
-    return data?.choices?.[0]?.message?.content || "Sin respuesta IA";
-  } catch (error) {
-    console.error("IA ERROR:", error);
-    return "Error IA";
+    const d = await r.json();
+    return d?.choices?.[0]?.message?.content || "";
+  } catch {
+    return "";
   }
 }
 
@@ -106,7 +98,7 @@ async function llamarIA(userMsg, contexto = "") {
 // HEALTH
 // =============================
 app.get("/", (req, res) => {
-  res.send("FIO IA funcionando 🚀");
+  res.send("FIO SaaS OK 🚀");
 });
 
 // =============================
@@ -124,18 +116,20 @@ app.post("/chat", async (req, res) => {
     const user = estado[userId];
 
     // =============================
-    // DETECTAR INTENCIÓN GLOBAL
+    // DETECCIÓN GLOBAL (SIEMPRE)
     // =============================
-    const modoDetectado = detectarModo(msg);
+    const intent = detectarIntencion(msg);
 
-    if (modoDetectado === "convocatorias") {
+    if (intent === STATES.CONVOCATORIAS) {
+      user.state = STATES.CONVOCATORIAS;
+
       return res.json({
-        response: "🔎 Aquí irán convocatorias (próximamente scraping real)"
+        response: "🔎 Aquí podrás ver convocatorias (siguiente fase: scraping real)"
       });
     }
 
-    if (modoDetectado === "proyecto" && user.modo !== "proyecto") {
-      user.modo = "proyecto";
+    if (intent === STATES.PROYECTO) {
+      user.state = STATES.PROYECTO;
       user.paso = 0;
       user.respuestas = [];
 
@@ -145,14 +139,14 @@ app.post("/chat", async (req, res) => {
     }
 
     // =============================
-    // SALUDO INTELIGENTE
+    // ESTADO: INICIO
     // =============================
-    if (user.inicio) {
-      user.inicio = false;
+    if (user.state === STATES.INICIO) {
+      user.state = STATES.ESPERANDO;
 
       return res.json({
         response:
-`Hola 👋 Soy FIO, tu asesor de proyectos.
+`Hola 👋 Soy FIO.
 
 Te ayudo a:
 ✔ Formular proyectos paso a paso
@@ -165,23 +159,34 @@ Te ayudo a:
     }
 
     // =============================
-    // FLUJO PROYECTO
+    // ESTADO: ESPERANDO
     // =============================
-    if (user.modo === "proyecto") {
+    if (user.state === STATES.ESPERANDO) {
+      return res.json({
+        response:
+"👉 Puedes escribir:\n- Quiero crear un proyecto\n- Ver convocatorias"
+      });
+    }
 
-      const preguntaActual = preguntas[user.paso];
+    // =============================
+    // ESTADO: PROYECTO
+    // =============================
+    if (user.state === STATES.PROYECTO) {
 
-      // IA mejora la respuesta
-      const mejora = await llamarIA(msg, `Estamos respondiendo:\n${preguntaActual}`);
-
+      // guardar respuesta
       user.respuestas.push(msg);
+
+      // mejorar con IA (opcional)
+      const mejora = await llamarIA(
+        `Mejora esta respuesta para proyecto:\n${msg}`
+      );
 
       if (user.paso < preguntas.length - 1) {
         user.paso++;
 
         return res.json({
           response:
-`${mejora}
+`${mejora || "👉 Respuesta registrada"}
 
 📊 Avance: ${Math.round((user.paso / preguntas.length) * 100)}%
 
@@ -190,18 +195,17 @@ Te ayudo a:
       }
 
       // =============================
-      // FINAL PROYECTO
+      // FINAL
       // =============================
-      const proyectoFinal = await llamarIA(
-        user.respuestas.join("\n"),
-        "Genera un proyecto completo estructurado con marco lógico"
+      const resultado = await llamarIA(
+        `Genera un proyecto estructurado:\n${user.respuestas.join("\n")}`
       );
 
       init(userId);
 
       return res.json({
         response: "🎉 Proyecto generado:",
-        proyecto: proyectoFinal
+        proyecto: resultado
       });
     }
 
@@ -213,15 +217,15 @@ Te ayudo a:
     });
 
   } catch (error) {
-    console.error("ERROR:", error);
+    console.error(error);
+
     return res.status(500).json({
-      error: "Error interno",
-      detalle: error.message
+      error: "Error interno"
     });
   }
 });
 
 // =============================
 app.listen(PORT, () => {
-  console.log("Servidor IA en puerto " + PORT);
+  console.log("Servidor SaaS en puerto " + PORT);
 });
