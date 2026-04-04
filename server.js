@@ -1,16 +1,16 @@
 import express from "express";
 import cors from "cors";
+import fetch from "node-fetch";
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// =============================
-// RUTA BASE
-// =============================
-app.get("/", (req, res) => {
-  res.send("FIO backend activo 🚀");
-});
+const PORT = process.env.PORT || 3000;
+
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+const SERP_API_KEY = process.env.SERP_API_KEY;
+const WP_API = process.env.WP_API; // https://tusitio.com/wp-json/wp/v2/documentos_fio
 
 // =============================
 // MEMORIA
@@ -18,67 +18,91 @@ app.get("/", (req, res) => {
 const estado = {};
 
 // =============================
-// VALIDACIÓN
+// BUSCAR EN WORDPRESS (RAG)
 // =============================
-function validar(msg) {
-  return msg && msg.trim().length > 5;
+async function buscarWP(query) {
+  if (!WP_API) return "";
+
+  try {
+    const r = await fetch(`${WP_API}?search=${encodeURIComponent(query)}&per_page=3`);
+    const data = await r.json();
+
+    return data.map(x => x.content.rendered.replace(/<[^>]+>/g, "")).join("\n");
+  } catch {
+    return "";
+  }
 }
 
 // =============================
-// MEJORA RESPUESTAS
+// BUSCAR EN INTERNET
 // =============================
-function mejorar(paso, msg) {
-  const t = msg.trim();
-  const texto = t.charAt(0).toUpperCase() + t.slice(1);
+async function buscarWeb(q) {
+  if (!SERP_API_KEY) return "";
 
-  if (paso === 1) {
-    return `Formulación del problema:
-"${texto}."
+  const url = `https://serpapi.com/search.json?q=${q}&api_key=${SERP_API_KEY}`;
+  const r = await fetch(url);
+  const d = await r.json();
 
-👉 Debe ser una situación negativa, clara y con población afectada.`;
-  }
-
-  if (paso === 2) {
-    return `Ubicación definida:
-"${texto}"
-
-👉 Sé específico (municipio, territorio, institución).`;
-  }
-
-  if (paso === 3) {
-    return `Población objetivo:
-"${texto}"
-
-👉 Intenta segmentar (edad, sector, cantidad).`;
-  }
-
-  if (paso === 4) {
-    return `Resultado esperado:
-"${texto}"
-
-👉 Redáctalo como cambio o impacto (mejorar, fortalecer, reducir).`;
-  }
-
-  return `"${texto}"`;
+  return d.organic_results?.slice(0, 2).map(x => x.snippet).join("\n") || "";
 }
 
 // =============================
-// FLUJO
+// PREGUNTAS
 // =============================
 const preguntas = [
   "¿Cómo se llama el proyecto?",
-  "¿Cuál es el problema que quieres resolver?",
+  "¿Cuál es el problema principal que se desea resolver?",
   "¿Dónde se desarrolla el proyecto?",
-  "¿A quién beneficia?",
-  "¿Qué resultados esperas lograr?"
+  "¿A quién está dirigido?",
+  "¿Qué evidencias tienes del problema?",
+  "¿Cuál es el tema del proyecto?",
+  "¿Cuál es la duración estimada?",
+  "¿Con qué recursos cuentas?",
+  "¿Cuál es el presupuesto disponible?",
+  "¿Qué metas esperas lograr?",
+  "¿A qué ODS se alinea?",
+  "¿Qué formato institucional debo usar?",
+  "¿Debo seguir normas específicas?",
+  "¿Deseas que proponga alternativas?"
 ];
 
 // =============================
-// ENDPOINT
+// PROMPT BASE (TU AGENTE)
 // =============================
-app.post("/chat", (req, res) => {
-  const { userId, msg } = req.body;
+function construirPrompt(contexto, respuestas, msg) {
+  return `
+Eres un Agente Experto en Formulación de Proyectos.
 
+Reglas:
+- NO inventas metodologías
+- SOLO usas formatos oficiales y documentos cargados
+- Si hay conflicto, usa el más reciente
+
+Contexto técnico:
+${contexto}
+
+Datos del usuario:
+${JSON.stringify(respuestas)}
+
+Nueva entrada:
+${msg}
+
+Debes continuar con la secuencia:
+1. Árbol de problemas
+2. Árbol de objetivos
+3. Alternativas
+4. Formulación completa (según formato)
+5. Validación lógica
+
+Respuesta técnica, estructurada y profesional.
+`;
+}
+
+// =============================
+// CHAT
+// =============================
+app.post("/chat", async (req, res) => {
+  const { userId, msg } = req.body;
   const uid = userId || "default";
 
   if (!estado[uid]) {
@@ -87,92 +111,53 @@ app.post("/chat", (req, res) => {
 
   let paso = estado[uid].paso;
 
-  // BIENVENIDA
-  if (paso === 0) {
-    estado[uid].paso = 1;
-
-    return res.json({
-      response: `Hola, ¿cómo va? Soy FIO 👋
-
-Estoy acá para que juntos formulemos un proyecto impactante.
-
-No te preocupes, vamos paso a paso.
-
-(10%) Empezamos:
-👉 ${preguntas[0]}`
-    });
-  }
-
-  // VALIDACIÓN
-  if (!validar(msg)) {
-    return res.json({
-      response: `Hey, pilas 👀
-
-Dame un poco más de detalle para que esto quede sólido.`
-    });
-  }
-
-  // GUARDAR
-  estado[uid].respuestas.push(msg);
-
-  // MEJORA
-  const mejora = mejorar(paso, msg);
-
-  // SIGUIENTE PASO
+  // =============================
+  // FASE 1: PREGUNTAS
+  // =============================
   if (paso < preguntas.length) {
+    if (paso > 0) estado[uid].respuestas.push(msg);
+
     estado[uid].paso++;
 
     return res.json({
-      response: `(${paso * 20}%) Vas muy bien 🔥
+      response: `(${Math.round((paso / 14) * 100)}%) 
 
-${mejora}
-
-👉 Sigamos:
-${preguntas[paso]}`
+👉 ${preguntas[paso]}`
     });
   }
 
-  // RESULTADO FINAL
-  const r = estado[uid].respuestas;
+  // =============================
+  // FASE 2: IA + RAG
+  // =============================
+  const respuestas = estado[uid].respuestas;
 
-  const proyecto = `
-📄 PROYECTO FORMULADO
+  const contextoWP = await buscarWP(msg);
+  const contextoWeb = await buscarWeb(msg);
 
-🔹 Nombre:
-${r[0]}
+  const contexto = contextoWP + "\n" + contextoWeb;
 
-🔹 Problema:
-${r[1]}
+  const prompt = construirPrompt(contexto, respuestas, msg);
 
-🔹 Ubicación:
-${r[2]}
+  const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model: "openai/gpt-4o-mini",
+      messages: [{ role: "user", content: prompt }]
+    })
+  });
 
-🔹 Población:
-${r[3]}
-
-🎯 Resultado esperado:
-${r[4]}
-`;
-
-  // RESET
-  estado[uid] = { paso: 0, respuestas: [] };
+  const d = await r.json();
 
   return res.json({
-    response: `(100%) Lo logramos 🚀🔥
-
-Tu proyecto ya tiene una base clara y estructurada.
-
-👉 Podemos llevarlo a marco lógico completo cuando quieras.
-
-${proyecto}`
+    response: d.choices?.[0]?.message?.content || "Error IA"
   });
 });
 
 // =============================
-// PUERTO
-// =============================
-const PORT = process.env.PORT || 3000;
-
 app.listen(PORT, () => {
-  console.log("Servidor FIO corriendo en puerto " + PORT + " 🚀");
+  console.log("FIO PRO corriendo 🚀 " + PORT);
 });
