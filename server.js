@@ -1,7 +1,3 @@
-// =============================
-// FIO BACKEND PRO SaaS
-// =============================
-
 import express from "express";
 import cors from "cors";
 import fetch from "node-fetch";
@@ -17,28 +13,16 @@ const PORT = process.env.PORT || 3000;
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 
-// =============================
-// RUTA BASE
-// =============================
 app.get("/", (req, res) => {
   res.send("FIO backend PRO activo 🚀");
 });
 
-// =============================
-// MEMORIA
-// =============================
 const estado = {};
 
-// =============================
-// VALIDACIÓN
-// =============================
 function validar(msg) {
   return msg && msg.trim().length > 5;
 }
 
-// =============================
-// MEJORA TIPO CONSULTOR
-// =============================
 function mejorar(paso, msg) {
   const t = msg.trim();
   const texto = t.charAt(0).toUpperCase() + t.slice(1);
@@ -60,9 +44,6 @@ function mejorar(paso, msg) {
   return `"${texto}"`;
 }
 
-// =============================
-// 14 PREGUNTAS
-// =============================
 const preguntas = [
   "¿Cómo se llama el proyecto?",
   "¿Cuál es el problema principal que se desea resolver?",
@@ -80,9 +61,6 @@ const preguntas = [
   "¿Deseas que proponga alternativas?"
 ];
 
-// =============================
-// LLAMADA A IA
-// =============================
 async function llamarIA(prompt) {
   const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
@@ -100,9 +78,6 @@ async function llamarIA(prompt) {
   return d.choices?.[0]?.message?.content || "Error IA";
 }
 
-// =============================
-// ENDPOINT PRINCIPAL
-// =============================
 app.post("/chat", async (req, res) => {
   const { userId = "default", msg = "" } = req.body;
 
@@ -112,10 +87,7 @@ app.post("/chat", async (req, res) => {
 
   let paso = estado[userId].paso;
 
-  // =============================
-  // INICIO
-  // =============================
-  if (paso === 0) {
+ if (paso === 0) {
     estado[userId].paso = 1;
 
     return res.json({
@@ -127,9 +99,6 @@ Vamos a construir un proyecto sólido paso a paso.
     });
   }
 
-  // =============================
-  // VALIDACIÓN
-  // =============================
   if (!validar(msg)) {
     return res.json({
       response: "Necesito un poco más de detalle para que esto quede bien formulado 👀"
@@ -140,10 +109,7 @@ Vamos a construir un proyecto sólido paso a paso.
 
   const mejora = mejorar(paso, msg);
 
-  // =============================
-  // SIGUIENTE PREGUNTA
-  // =============================
-  if (paso < preguntas.length) {
+   if (paso < preguntas.length) {
     estado[userId].paso++;
 
     return res.json({
@@ -155,9 +121,6 @@ ${mejora}
     });
   }
 
-  // =============================
-  // GENERAR PROYECTO COMPLETO
-  // =============================
   const r = estado[userId].respuestas;
 
   const promptFinal = `
@@ -179,10 +142,7 @@ Usa redacción técnica, tablas y coherencia total.
 
   const resultado = await llamarIA(promptFinal);
 
-  // =============================
-  // MATCHING CONVOCATORIAS
-  // =============================
-  const proyectoData = {
+    const proyectoData = {
     sector: "social",
     ods: ["4", "17"],
     presupuesto: 4000000000,
@@ -195,16 +155,12 @@ Usa redacción técnica, tablas y coherencia total.
   // RESET
   estado[userId] = { paso: 0, respuestas: [] };
 
-  // =============================
-  // RESPUESTA FINAL
-  // =============================
-  return res.json({
+   return res.json({
     proyecto: resultado,
     convocatorias: matches
   });
 });
 
-// =============================
 app.listen(PORT, () => {
   console.log("Servidor FIO PRO en puerto " + PORT);
 });
