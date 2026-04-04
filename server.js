@@ -1,19 +1,20 @@
 import express from "express";
 import cors from "cors";
-import fetch from "node-fetch";
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 
 // =============================
 // MEMORIA
 // =============================
 const estado = {};
 
+// =============================
+// ESTADOS
+// =============================
 const STATES = {
   INICIO: "inicio",
   ESPERANDO: "esperando",
@@ -22,7 +23,7 @@ const STATES = {
 };
 
 // =============================
-// PREGUNTAS
+// PREGUNTAS (14)
 // =============================
 const preguntas = [
   "¿Cómo se llama el proyecto?",
@@ -42,6 +43,8 @@ const preguntas = [
 ];
 
 // =============================
+// INIT
+// =============================
 function init(userId) {
   estado[userId] = {
     state: STATES.INICIO,
@@ -51,14 +54,12 @@ function init(userId) {
 }
 
 // =============================
-// DETECTAR INTENCIÓN (MEJORADO)
+// DETECTAR INTENCIÓN (ROBUSTO)
 // =============================
 function detectarIntencion(msg = "") {
   const m = msg.toLowerCase();
 
-  if (m.includes("convocatoria") || m.includes("convocatorias")) {
-    return STATES.CONVOCATORIAS;
-  }
+  if (m.includes("convocatoria")) return STATES.CONVOCATORIAS;
 
   if (
     m.includes("proyecto") ||
@@ -72,57 +73,43 @@ function detectarIntencion(msg = "") {
 }
 
 // =============================
-// IA (opcional)
+// NORMALIZAR INPUT (CLAVE)
 // =============================
-async function mejorarRespuesta(msg) {
-  if (!OPENROUTER_API_KEY) return "";
-
-  try {
-    const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${OPENROUTER_API_KEY}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model: "openai/gpt-3.5-turbo",
-        messages: [
-          {
-            role: "user",
-            content: `Mejora esta respuesta de proyecto de forma profesional:\n${msg}`
-          }
-        ]
-      })
-    });
-
-    const d = await r.json();
-    return d?.choices?.[0]?.message?.content || "";
-  } catch {
-    return "";
-  }
+function getMessage(body) {
+  return (
+    body.msg ||
+    body.message ||
+    body.text ||
+    ""
+  ).toString();
 }
 
 // =============================
 app.get("/", (req, res) => {
-  res.send("FIO OK 🚀");
+  res.send("FIO backend OK 🚀");
 });
 
 // =============================
-// CHAT (FLUJO CORREGIDO)
+// CHAT
 // =============================
-app.post("/chat", async (req, res) => {
+app.post("/chat", (req, res) => {
   try {
-    let { userId, msg } = req.body;
+    let userId = req.body.userId || "global-user";
+    let msg = getMessage(req.body);
 
-    if (!userId) userId = "global";
-    if (!msg) msg = "";
+    // DEBUG REAL
+    console.log("BODY:", req.body);
+    console.log("MSG:", msg);
 
     if (!estado[userId]) init(userId);
-
     const user = estado[userId];
 
-    // 🔥 1. DETECTAR INTENCIÓN SIEMPRE
+    // =============================
+    // 1. DETECTAR INTENCIÓN SIEMPRE
+    // =============================
     const intent = detectarIntencion(msg);
+    console.log("INTENT:", intent);
+    console.log("STATE BEFORE:", user.state);
 
     if (intent === STATES.PROYECTO) {
       user.state = STATES.PROYECTO;
@@ -130,7 +117,7 @@ app.post("/chat", async (req, res) => {
       user.respuestas = [];
 
       return res.json({
-        response: `Perfecto 👌 iniciemos.\n\n👉 ${preguntas[0]}`
+        response: `Perfecto 👌 iniciemos paso a paso.\n\n👉 ${preguntas[0]}`
       });
     }
 
@@ -138,11 +125,13 @@ app.post("/chat", async (req, res) => {
       user.state = STATES.CONVOCATORIAS;
 
       return res.json({
-        response: "🔎 Aquí verás convocatorias (siguiente fase scraping)"
+        response: "🔎 Aquí verás convocatorias (próxima fase: scraping real)"
       });
     }
 
-    // 🔥 2. EJECUTAR ESTADO
+    // =============================
+    // 2. ESTADOS
+    // =============================
 
     // INICIO
     if (user.state === STATES.INICIO) {
@@ -153,11 +142,11 @@ app.post("/chat", async (req, res) => {
 `Hola 👋 Soy FIO.
 
 Te ayudo a:
-✔ Formular proyectos
+✔ Formular proyectos paso a paso
 ✔ Mejorar ideas
 ✔ Buscar convocatorias
 
-👉 Dime:
+👉 Escribe:
 "Quiero crear un proyecto"`
       });
     }
@@ -166,22 +155,21 @@ Te ayudo a:
     if (user.state === STATES.ESPERANDO) {
       return res.json({
         response:
-"👉 Escribe:\n- Quiero crear un proyecto\n- Ver convocatorias"
+"👉 Puedes escribir:\n- Quiero crear un proyecto\n- Ver convocatorias"
       });
     }
 
-    // PROYECTO
+    // PROYECTO (FLUJO REAL)
     if (user.state === STATES.PROYECTO) {
-      user.respuestas.push(msg);
 
-      const mejora = await mejorarRespuesta(msg);
+      user.respuestas.push(msg);
 
       if (user.paso < preguntas.length - 1) {
         user.paso++;
 
         return res.json({
           response:
-`${mejora || "✔ Respuesta guardada"}
+`✔ Respuesta guardada
 
 📊 Avance: ${Math.round((user.paso / preguntas.length) * 100)}%
 
@@ -195,7 +183,7 @@ Te ayudo a:
       init(userId);
 
       return res.json({
-        response: "🎉 Proyecto completo generado",
+        response: "🎉 Proyecto completado",
         data: resumen
       });
     }
@@ -203,20 +191,24 @@ Te ayudo a:
     // CONVOCATORIAS
     if (user.state === STATES.CONVOCATORIAS) {
       return res.json({
-        response: "🔎 (Aquí irá scraping real en siguiente fase)"
+        response: "🔎 Mostrando convocatorias (mock)"
       });
     }
 
+    // DEFAULT
     return res.json({
       response: "👉 Escribe: 'Quiero crear un proyecto'"
     });
 
-  } catch (e) {
-    console.error(e);
-    return res.status(500).json({ error: "Error interno" });
+  } catch (error) {
+    console.error("ERROR:", error);
+
+    return res.status(500).json({
+      error: "Error interno"
+    });
   }
 });
 
 app.listen(PORT, () => {
-  console.log("Servidor funcionando en puerto " + PORT);
+  console.log("Servidor FINAL funcionando en puerto " + PORT);
 });
