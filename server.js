@@ -18,15 +18,30 @@ app.get("/", (req,res)=>{
   res.send("FIO backend activo");
 });
 
-// funciones
+// 🔎 BUSCAR EN INTERNET
 async function buscarDatos(q){
   if(!SERP_API_KEY) return "";
   const url=`https://serpapi.com/search.json?q=${q}&api_key=${SERP_API_KEY}`;
   const r=await fetch(url);
   const d=await r.json();
-  return d.organic_results?.slice(0,2).map(x=>x.snippet).join("\\n")||"";
+  return d.organic_results?.slice(0,2).map(x=>x.snippet).join("\n")||"";
 }
 
+// 🌐 LEER WORDPRESS
+async function obtenerContenidoWP() {
+  try {
+    const res = await fetch(`${process.env.WP_URL}/wp-json/wp/v2/posts?per_page=5`);
+    const data = await res.json();
+
+    return data
+      .map(p => p.title.rendered + ": " + p.content.rendered.replace(/<[^>]+>/g, ""))
+      .join("\n\n");
+  } catch (e) {
+    return "";
+  }
+}
+
+// 📄 GENERAR PDF
 function generarPDF(texto){
   const doc=new PDFDocument();
   const path="proyecto.pdf";
@@ -36,6 +51,7 @@ function generarPDF(texto){
   return path;
 }
 
+// 💬 CHAT
 app.post("/chat", async(req,res)=>{
   const msg=req.body.message || "";
 
@@ -44,16 +60,34 @@ app.post("/chat", async(req,res)=>{
     return res.json({response:"PDF generado",file});
   }
 
-  const contexto=await buscarDatos(msg);
+  // 🔗 CONTEXTOS
+  const contextoInternet = await buscarDatos(msg);
+  const contextoWP = await obtenerContenidoWP();
 
+  // 🧠 PROMPT INTELIGENTE
   const prompt=`
-Eres FIO asesor experto.
-Trabajas por etapas.
+Eres FIO, asesor experto en proyectos sociales, ambientales, culturales y productivos.
 
-Contexto:
-${contexto}
+Trabajas por etapas:
+- haces preguntas
+- validas información
+- construyes soluciones reales
 
-Usuario:${msg}
+Usas dos fuentes:
+
+1. Base interna (WordPress):
+${contextoWP}
+
+2. Información actual (Internet):
+${contextoInternet}
+
+Reglas:
+- Prioriza el conocimiento de FIO
+- Usa internet solo como complemento
+- Responde claro, estructurado y útil
+- Guía paso a paso
+
+Usuario: ${msg}
 `;
 
   const r=await fetch("https://openrouter.ai/api/v1/chat/completions",{
