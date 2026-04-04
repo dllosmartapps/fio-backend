@@ -16,11 +16,11 @@ const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 // HEALTH
 // =============================
 app.get("/", (req, res) => {
-  res.send("FIO SaaS activo 🚀");
+  res.send("FIO SaaS PRO activo 🚀");
 });
 
 // =============================
-// MEMORIA (ESCALAR → REDIS)
+// MEMORIA (temporal)
 // =============================
 const estado = {};
 
@@ -45,10 +45,11 @@ const preguntas = [
 ];
 
 // =============================
-// VALIDACIÓN FUERTE
+// VALIDACIÓN
 // =============================
 function validarRespuesta(texto) {
   if (!texto) return false;
+
   const limpio = texto.toString().trim();
 
   if (limpio.length < 5) return false;
@@ -75,6 +76,7 @@ function detectarModo(msg = "") {
 
   if (
     m.includes("convocatoria") ||
+    m.includes("convocatorias") ||
     m.includes("financiacion") ||
     m.includes("fondos")
   ) return "convocatorias";
@@ -88,7 +90,7 @@ function detectarModo(msg = "") {
 async function llamarIA(prompt) {
   try {
     if (!OPENROUTER_API_KEY) {
-      return "⚠️ Falta API KEY";
+      return "⚠️ Configura OPENROUTER_API_KEY";
     }
 
     const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -105,9 +107,10 @@ async function llamarIA(prompt) {
     });
 
     const d = await r.json();
+
     return d?.choices?.[0]?.message?.content || "Sin respuesta IA";
   } catch (e) {
-    console.error(e);
+    console.error("ERROR IA:", e);
     return "Error IA";
   }
 }
@@ -119,13 +122,13 @@ async function asesor(pregunta, respuesta) {
   const prompt = `
 Eres experto en formulación de proyectos (MGA y Marco Lógico).
 
-Respuesta usuario:
+Respuesta:
 "${respuesta}"
 
 Pregunta:
 "${pregunta}"
 
-Corrige, mejora y enseña.
+Corrige y mejora.
 
 Formato:
 
@@ -135,82 +138,59 @@ Formato:
 
 👉 Explicación breve
 `;
-
   return await llamarIA(prompt);
 }
 
 // =============================
-// ÁRBOL DE PROBLEMAS
+// BLOQUES SaaS
 // =============================
-async function arbolProblemas(respuestas) {
-  const prompt = `
-Construye un árbol de problemas con:
-
-- Problema central
+async function arbolProblemas(r) {
+  return await llamarIA(`
+Construye árbol de problemas:
+- problema central
 - 3 causas
 - 3 efectos
 
-Basado en:
-${respuestas.join("\n")}
-
-Formato claro.
-`;
-
-  return await llamarIA(prompt);
+Datos:
+${r.join("\n")}
+`);
 }
 
-// =============================
-// ÁRBOL DE OBJETIVOS
-// =============================
-async function arbolObjetivos(respuestas) {
-  const prompt = `
-Convierte el problema en árbol de objetivos:
+async function arbolObjetivos(r) {
+  return await llamarIA(`
+Construye árbol de objetivos:
+- objetivo central
+- medios
+- fines
 
-- Objetivo central
-- Medios
-- Fines
-
-Basado en:
-${respuestas.join("\n")}
-`;
-
-  return await llamarIA(prompt);
+Datos:
+${r.join("\n")}
+`);
 }
 
-// =============================
-// ALTERNATIVAS
-// =============================
-async function alternativas(respuestas) {
-  const prompt = `
-Propón 3 alternativas de solución viables.
+async function alternativas(r) {
+  return await llamarIA(`
+Propón 3 soluciones viables.
 
-Basado en:
-${respuestas.join("\n")}
-`;
-
-  return await llamarIA(prompt);
+Datos:
+${r.join("\n")}
+`);
 }
 
-// =============================
-// MARCO LÓGICO
-// =============================
-async function marcoLogico(respuestas) {
-  const prompt = `
-Construye una matriz de marco lógico con:
+async function marcoLogico(r) {
+  return await llamarIA(`
+Construye matriz de marco lógico:
+- fin
+- propósito
+- componentes
+- actividades
+- indicadores
 
-- Fin
-- Propósito
-- Componentes
-- Actividades
-- Indicadores
+Formato tabla
 
-Basado en:
-${respuestas.join("\n")}
-
-Formato tabla.
-`;
-
-  return await llamarIA(prompt);
+Datos:
+${r.join("\n")}
+`);
 }
 
 // =============================
@@ -229,11 +209,20 @@ function resetUser(id) {
 // =============================
 app.post("/chat", async (req, res) => {
   try {
-    const { userId = "default", msg = "" } = req.body;
+    let { userId, msg } = req.body;
+
+    // 🔥 FIX CRÍTICO
+    if (!userId || userId === "") userId = "global-user";
+    if (!msg) msg = "";
+
+    console.log("USER:", userId);
+    console.log("MSG:", msg);
 
     if (!estado[userId]) resetUser(userId);
 
     const user = estado[userId];
+
+    console.log("ESTADO:", user);
 
     // =============================
     // INICIO
@@ -241,16 +230,25 @@ app.post("/chat", async (req, res) => {
     if (!user.modo) {
       const modo = detectarModo(msg);
 
+      console.log("MODO:", modo);
+
       if (modo === "proyecto") {
         user.modo = "proyecto";
+        user.paso = 0;
+        user.respuestas = [];
+
         return res.json({
-          response: `Iniciemos tu proyecto 🚀\n\n👉 ${preguntas[0]}`
+          response: `Perfecto 👌 iniciemos.\n\n👉 ${preguntas[0]}`
         });
       }
 
       if (modo === "convocatorias") {
         const conv = await buscarConvocatorias("social");
-        return res.json({ response: "Convocatorias:", data: conv });
+
+        return res.json({
+          response: "Convocatorias encontradas:",
+          data: conv
+        });
       }
 
       return res.json({
@@ -276,13 +274,15 @@ app.post("/chat", async (req, res) => {
       if (user.paso < preguntas.length - 1) {
         user.paso++;
 
+        const progreso = Math.round((user.paso / preguntas.length) * 100);
+
         return res.json({
-          response: `${mejora}\n\n📊 ${Math.round((user.paso / preguntas.length) * 100)}%\n👉 ${preguntas[user.paso]}`
+          response: `${mejora}\n\n📊 Avance: ${progreso}%\n👉 ${preguntas[user.paso]}`
         });
       }
 
       // =============================
-      // GENERACIÓN SaaS
+      // GENERACIÓN FINAL
       // =============================
       const problemas = await arbolProblemas(user.respuestas);
       const objetivos = await arbolObjetivos(user.respuestas);
@@ -304,13 +304,16 @@ app.post("/chat", async (req, res) => {
     }
 
   } catch (error) {
+    console.error("ERROR:", error);
+
     return res.status(500).json({
-      error: error.message
+      error: "Error interno",
+      detalle: error.message
     });
   }
 });
 
 // =============================
 app.listen(PORT, () => {
-  console.log("Servidor SaaS en puerto " + PORT);
+  console.log("Servidor SaaS PRO en puerto " + PORT);
 });
