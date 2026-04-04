@@ -227,7 +227,35 @@ app.post("/chat", async (req, res) => {
     // =============================
     // INICIO
     // =============================
-    if (!user.modo) {
+    // =============================
+// INICIO INTELIGENTE (ANTI-BLOQUEO)
+// =============================
+if (!user.modo) {
+  const modo = detectarModo(msg);
+
+  console.log("MODO DETECTADO:", modo);
+
+  // 👉 PRIORIDAD: convocatorias
+  if (modo === "convocatorias") {
+    const conv = await buscarConvocatorias("social");
+
+    return res.json({
+      response: "Aquí tienes convocatorias:",
+      data: conv
+    });
+  }
+
+  // 👉 DEFAULT: SIEMPRE PROYECTO (CLAVE)
+  user.modo = "proyecto";
+  user.paso = 0;
+  user.respuestas = [];
+
+  console.log("AUTO-INICIO PROYECTO");
+
+  return res.json({
+    response: `Perfecto 👌 iniciemos tu proyecto.\n\n👉 ${preguntas[0]}`
+  });
+}
       const modo = detectarModo(msg);
 
       console.log("MODO:", modo);
