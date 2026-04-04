@@ -9,8 +9,14 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 
+// =============================
+// MEMORIA
+// =============================
 const estado = {};
 
+// =============================
+// ESTADOS
+// =============================
 const STATES = {
   INICIO: "inicio",
   ESPERANDO: "esperando",
@@ -18,6 +24,9 @@ const STATES = {
   CONVOCATORIAS: "convocatorias"
 };
 
+// =============================
+// PREGUNTAS (14)
+// =============================
 const preguntas = [
   "¿Cómo se llama el proyecto?",
   "¿Cuál es el problema principal?",
@@ -26,15 +35,16 @@ const preguntas = [
   "¿Qué evidencias tienes?",
   "¿Tema del proyecto?",
   "¿Duración?",
-  "¿Recursos?",
-  "¿Presupuesto?",
-  "¿Metas?",
-  "¿ODS?",
-  "¿Formato?",
-  "¿Normas?",
+  "¿Recursos disponibles?",
+  "¿Presupuesto estimado?",
+  "¿Metas del proyecto?",
+  "¿ODS relacionados?",
+  "¿Formato requerido?",
+  "¿Normas o requisitos?",
   "¿Deseas ayuda adicional?"
 ];
 
+// =============================
 function init(userId) {
   estado[userId] = {
     state: STATES.INICIO,
@@ -44,14 +54,10 @@ function init(userId) {
 }
 
 // =============================
-// NORMALIZAR INPUT
-// =============================
 function getMessage(body) {
   return (body.msg || body.message || body.text || "").toString();
 }
 
-// =============================
-// DETECTAR INTENCIÓN
 // =============================
 function detectarIntencion(msg = "") {
   const m = msg.toLowerCase();
@@ -63,7 +69,7 @@ function detectarIntencion(msg = "") {
 }
 
 // =============================
-// VALIDACIÓN BÁSICA (LOCAL)
+// VALIDACIÓN BÁSICA
 // =============================
 function validarBasico(msg) {
   if (!msg || msg.length < 5) return "debil";
@@ -72,10 +78,29 @@ function validarBasico(msg) {
 }
 
 // =============================
-// IA VALIDADORA
+// CONTEXTO WORDPRESS
 // =============================
-async function validarConIA(pregunta, respuesta) {
+async function obtenerContextoWP() {
+  try {
+    const r = await fetch("https://tusitio.com/wp-json/wp/v2/posts?per_page=3");
+    const data = await r.json();
+
+    return data
+      .map(p => `${p.title.rendered} ${p.excerpt.rendered}`)
+      .join("\n");
+
+  } catch {
+    return "";
+  }
+}
+
+// =============================
+// IA ASESOR
+// =============================
+async function asesorIA(pregunta, respuesta) {
   if (!OPENROUTER_API_KEY) return null;
+
+  const contextoWP = await obtenerContextoWP();
 
   try {
     const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -88,22 +113,29 @@ async function validarConIA(pregunta, respuesta) {
         model: "openai/gpt-3.5-turbo",
         messages: [
           {
+            role: "system",
+            content: `
+Eres FIO, consultor experto en formulación de proyectos.
+
+Usa este conocimiento:
+${contextoWP}
+
+Responde SIEMPRE así:
+
+👉 Vas muy bien 🔥  
+👉 Podemos formularlo mejor así:
+"texto mejorado"
+
+👉 Explicación breve
+
+Luego guía al siguiente paso.
+`
+          },
+          {
             role: "user",
             content: `
-Actúa como consultor de proyectos.
-
 Pregunta: ${pregunta}
 Respuesta: ${respuesta}
-
-Evalúa:
-1. ¿Es débil, media o buena?
-2. Mejora la respuesta
-3. Explica brevemente
-
-Formato:
-NIVEL:
-MEJORA:
-EXPLICACION:
 `
           }
         ]
@@ -119,6 +151,53 @@ EXPLICACION:
 }
 
 // =============================
+// GENERADOR FINAL
+// =============================
+async function generarProyecto(respuestas) {
+  if (!OPENROUTER_API_KEY) return respuestas.join("\n");
+
+  try {
+    const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: "openai/gpt-3.5-turbo",
+        messages: [
+          {
+            role: "user",
+            content: `
+Construye:
+
+1. Árbol de problemas
+2. Árbol de objetivos
+3. Alternativas
+4. Marco lógico
+
+Con base en:
+${respuestas.join("\n")}
+`
+          }
+        ]
+      })
+    });
+
+    const d = await r.json();
+    return d?.choices?.[0]?.message?.content || "Error generando";
+
+  } catch {
+    return "Error IA";
+  }
+}
+
+// =============================
+app.get("/", (req, res) => {
+  res.send("FIO PRO 🚀");
+});
+
+// =============================
 app.post("/chat", async (req, res) => {
   try {
     let userId = req.body.userId || "global";
@@ -129,7 +208,7 @@ app.post("/chat", async (req, res) => {
 
     const intent = detectarIntencion(msg);
 
-    // CAMBIO DE MODO INTELIGENTE
+    // CAMBIO DE MODO
     if (intent === STATES.PROYECTO) {
       user.state = STATES.PROYECTO;
       user.paso = 0;
@@ -144,13 +223,11 @@ app.post("/chat", async (req, res) => {
       user.state = STATES.CONVOCATORIAS;
 
       return res.json({
-        response: "🔎 Aquí verás convocatorias (próxima fase)"
+        response: "🔎 Convocatorias (siguiente fase scraping real)"
       });
     }
 
-    // =============================
     // INICIO
-    // =============================
     if (user.state === STATES.INICIO) {
       user.state = STATES.ESPERANDO;
 
@@ -165,41 +242,41 @@ Te ayudo a formular proyectos paso a paso.
       });
     }
 
-    // =============================
     // ESPERANDO
-    // =============================
     if (user.state === STATES.ESPERANDO) {
       return res.json({
         response:
-"👉 Puedes escribir:\n- Quiero crear un proyecto\n- Ver convocatorias"
+"👉 Escribe:\n- Quiero crear un proyecto\n- Ver convocatorias"
       });
     }
 
-    // =============================
-    // PROYECTO CON VALIDACIÓN REAL
-    // =============================
+    // PROYECTO
     if (user.state === STATES.PROYECTO) {
 
       const preguntaActual = preguntas[user.paso];
 
-      const nivel = validarBasico(msg);
-
-      // 🔴 RESPUESTA DÉBIL
-      if (nivel === "debil") {
+      // evitar romper flujo
+      if (msg.includes("?")) {
         return res.json({
-          response:
-`👀 Tu respuesta es muy corta.
-
-👉 Intenta describir mejor:
-${preguntaActual}
-
-Ejemplo:
-"Describe el problema con contexto, población y lugar"`
+          response: `👉 Vamos paso a paso.\n\nResponde:\n${preguntaActual}`
         });
       }
 
-      // IA mejora
-      const analisisIA = await validarConIA(preguntaActual, msg);
+      const nivel = validarBasico(msg);
+
+      if (nivel === "debil") {
+        return res.json({
+          response:
+`👀 Necesito más detalle.
+
+👉 ${preguntaActual}
+
+Ejemplo:
+Describe con contexto, población y lugar`
+        });
+      }
+
+      const mejora = await asesorIA(preguntaActual, msg);
 
       user.respuestas.push(msg);
 
@@ -208,7 +285,7 @@ Ejemplo:
 
         return res.json({
           response:
-`${analisisIA || "✔ Respuesta aceptada"}
+`${mejora || "✔ Respuesta guardada"}
 
 📊 Avance: ${Math.round((user.paso / preguntas.length) * 100)}%
 
@@ -217,13 +294,13 @@ Ejemplo:
       }
 
       // FINAL
-      const resumen = user.respuestas.join("\n");
+      const resultado = await generarProyecto(user.respuestas);
 
       init(userId);
 
       return res.json({
-        response: "🎉 Proyecto completo",
-        data: resumen
+        response: "🎉 Proyecto formulado",
+        proyecto: resultado
       });
     }
 
@@ -238,5 +315,5 @@ Ejemplo:
 });
 
 app.listen(PORT, () => {
-  console.log("Servidor PRO listo en puerto " + PORT);
+  console.log("FIO PRO corriendo en puerto " + PORT);
 });
