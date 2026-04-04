@@ -13,13 +13,6 @@ const PORT = process.env.PORT || 3000;
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 
 // =============================
-// HEALTH
-// =============================
-app.get("/", (req, res) => {
-  res.send("FIO SaaS PRO activo 🚀");
-});
-
-// =============================
 // MEMORIA
 // =============================
 const estado = {};
@@ -29,7 +22,7 @@ const estado = {};
 // =============================
 const preguntas = [
   "¿Cómo se llama el proyecto?",
-  "¿Cuál es el problema principal?",
+  "¿Cuál es el problema principal que quieres resolver?",
   "¿Dónde se desarrolla?",
   "¿A quién beneficia?",
   "¿Qué evidencias tienes del problema?",
@@ -45,29 +38,25 @@ const preguntas = [
 ];
 
 // =============================
-// VALIDACIÓN
+// UTILIDADES
 // =============================
-function validarRespuesta(texto) {
-  if (!texto) return false;
-  const t = texto.trim();
-  if (t.length < 5) return false;
-
-  const basura = ["1", "ok", "si", "no", "x"];
-  if (basura.includes(t.toLowerCase())) return false;
-
-  return true;
+function limpiar(msg = "") {
+  return msg.toString().toLowerCase().trim();
 }
 
-// =============================
-// DETECTAR INTENCIÓN
-// =============================
-function detectarModo(msg = "") {
-  const m = msg.toLowerCase();
+function esCambioModo(msg) {
+  const m = limpiar(msg);
 
   if (m.includes("convocatoria")) return "convocatorias";
   if (m.includes("proyecto")) return "proyecto";
 
   return null;
+}
+
+function esValida(msg) {
+  if (!msg) return false;
+  if (msg.trim().length < 3) return false;
+  return true;
 }
 
 // =============================
@@ -88,58 +77,49 @@ async function llamarIA(prompt) {
     });
 
     const d = await r.json();
-    return d?.choices?.[0]?.message?.content || "Sin respuesta IA";
-  } catch (e) {
-    console.error("IA ERROR:", e);
-    return "Error IA";
+    return d?.choices?.[0]?.message?.content || "";
+  } catch {
+    return "";
   }
 }
 
 // =============================
-// ASESOR
+// ASESOR HUMANO
 // =============================
 async function asesor(pregunta, respuesta) {
   return await llamarIA(`
-Eres experto en proyectos.
+Eres un consultor experto en proyectos.
 
-Respuesta: "${respuesta}"
-Pregunta: "${pregunta}"
+Usuario dijo:
+"${respuesta}"
 
-Corrige y mejora.
+Pregunta:
+"${pregunta}"
+
+Haz esto:
+- mejora la respuesta
+- guía al usuario
+- sé amable y motivador
 
 Formato:
-👉 Mejor así:
+
+👉 Vas muy bien 🔥
+👉 Podemos formularlo así:
 "texto mejorado"
+
+👉 Consejo breve
 `);
-}
-
-// =============================
-// BLOQUES
-// =============================
-async function arbolProblemas(r) {
-  return await llamarIA(`Genera árbol de problemas:\n${r.join("\n")}`);
-}
-
-async function arbolObjetivos(r) {
-  return await llamarIA(`Genera árbol de objetivos:\n${r.join("\n")}`);
-}
-
-async function alternativas(r) {
-  return await llamarIA(`Genera soluciones:\n${r.join("\n")}`);
-}
-
-async function marcoLogico(r) {
-  return await llamarIA(`Genera marco lógico:\n${r.join("\n")}`);
 }
 
 // =============================
 // RESET
 // =============================
-function resetUser(id) {
-  estado[id] = {
+function reset(userId) {
+  estado[userId] = {
     modo: null,
     paso: 0,
-    respuestas: []
+    respuestas: [],
+    inicio: true
   };
 }
 
@@ -153,45 +133,84 @@ app.post("/chat", async (req, res) => {
     if (!userId) userId = "global-user";
     if (!msg) msg = "";
 
-    if (!estado[userId]) {
-      resetUser(userId);
-    }
+    if (!estado[userId]) reset(userId);
 
     const user = estado[userId];
+    const m = limpiar(msg);
 
     // =============================
-    // INICIO (ANTI LOOP)
+    // SALUDO INICIAL
     // =============================
-    if (!user.modo) {
-      const modo = detectarModo(msg);
+    if (user.inicio) {
+      user.inicio = false;
 
-      // convocatorias directo
-      if (modo === "convocatorias") {
-        const conv = await buscarConvocatorias("social");
-        return res.json({
-          response: "Aquí tienes convocatorias:",
-          data: conv
-        });
-      }
+      return res.json({
+        response:
+`Hola 👋 Soy FIO, tu asesor en formulación de proyectos.
 
-      // 👉 SIEMPRE INICIA PROYECTO
+Puedo ayudarte a:
+✔ Crear proyectos paso a paso
+✔ Mejorar ideas
+✔ Buscar convocatorias
+
+💡 Solo dime qué quieres hacer o escribe tu idea.
+
+Por ejemplo:
+👉 "Quiero crear un proyecto"
+👉 "Ver convocatorias"`
+      });
+    }
+
+    // =============================
+    // CAMBIO DE MODO GLOBAL
+    // =============================
+    const cambio = esCambioModo(msg);
+
+    if (cambio === "convocatorias") {
+      const conv = await buscarConvocatorias("social");
+
+      return res.json({
+        response: "🔎 Aquí tienes convocatorias disponibles:",
+        data: conv
+      });
+    }
+
+    if (cambio === "proyecto" && !user.modo) {
       user.modo = "proyecto";
       user.paso = 0;
       user.respuestas = [];
 
       return res.json({
-        response: `Perfecto 👌 iniciemos.\n\n👉 ${preguntas[0]}`
+        response:
+`Perfecto 👌 vamos paso a paso.
+
+👉 ${preguntas[0]}`
       });
     }
 
     // =============================
-    // PROYECTO
+    // SI NO HAY MODO → GUIAR
+    // =============================
+    if (!user.modo) {
+      return res.json({
+        response:
+`Cuéntame 👀
+
+¿Quieres crear un proyecto o ver convocatorias?
+
+👉 Ejemplo:
+"Quiero crear un proyecto"`
+      });
+    }
+
+    // =============================
+    // FLUJO PROYECTO
     // =============================
     if (user.modo === "proyecto") {
 
-      if (!validarRespuesta(msg)) {
+      if (!esValida(msg)) {
         return res.json({
-          response: "Dame más detalle 👀"
+          response: "💡 Dame un poco más de detalle para ayudarte mejor"
         });
       }
 
@@ -203,37 +222,35 @@ app.post("/chat", async (req, res) => {
         user.paso++;
 
         return res.json({
-          response: `${mejora}\n\n👉 ${preguntas[user.paso]}`
+          response:
+`${mejora}
+
+📊 Vamos avanzando paso a paso
+
+👉 ${preguntas[user.paso]}`
         });
       }
 
       // FINAL
-      const problemas = await arbolProblemas(user.respuestas);
-      const objetivos = await arbolObjetivos(user.respuestas);
-      const alt = await alternativas(user.respuestas);
-      const marco = await marcoLogico(user.respuestas);
+      const proyecto = await llamarIA(`
+Genera un proyecto estructurado:
+${user.respuestas.join("\n")}
+`);
 
-      const conv = await buscarConvocatorias("social");
-      const match = hacerMatching({ sector: "social" }, conv);
-
-      resetUser(userId);
+      reset(userId);
 
       return res.json({
-        arbol_problemas: problemas,
-        arbol_objetivos: objetivos,
-        alternativas: alt,
-        marco_logico: marco,
-        convocatorias: match
+        response: "🎉 Proyecto generado:",
+        proyecto
       });
     }
 
   } catch (error) {
-    console.error("ERROR:", error);
-    return res.status(500).json({ error: error.message });
+    return res.json({ error: error.message });
   }
 });
 
 // =============================
 app.listen(PORT, () => {
-  console.log("Servidor funcionando en puerto " + PORT);
+  console.log("Servidor PRO activo en " + PORT);
 });
