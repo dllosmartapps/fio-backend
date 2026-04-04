@@ -30,7 +30,7 @@ async function buscarDatos(q){
 // 🌐 LEER WORDPRESS
 async function obtenerContenidoWP() {
   try {
-    const res = await fetch(`${process.env.WP_URL}/wp-json/wp/v2/posts?per_page=5`);
+    const res = await fetch(`${process.env.WP_URL}/wp-json/wp/v2/posts?per_page=10`);
     const data = await res.json();
 
     return data
