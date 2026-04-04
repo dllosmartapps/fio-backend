@@ -11,7 +11,7 @@ const PORT = process.env.PORT || 3000;
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 
 // =============================
-// DB LOCAL (PERSISTENCIA)
+// DB LOCAL
 // =============================
 const DB_PATH = "./data/estado.json";
 
@@ -30,8 +30,6 @@ function guardarEstado(data) {
 let estado = cargarEstado();
 
 // =============================
-// ESTADOS
-// =============================
 const STATES = {
   INICIO: "inicio",
   ESPERANDO: "esperando",
@@ -39,8 +37,6 @@ const STATES = {
   CONVOCATORIAS: "convocatorias"
 };
 
-// =============================
-// PREGUNTAS (14)
 // =============================
 const preguntas = [
   "¿Cómo se llama el proyecto?",
@@ -84,11 +80,7 @@ function detectarIntencion(msg = "") {
 
   if (m.includes("convocatoria")) return STATES.CONVOCATORIAS;
 
-  if (
-    m.includes("proyecto") ||
-    m.includes("crear") ||
-    m.includes("formular")
-  ) {
+  if (m.includes("proyecto") || m.includes("crear")) {
     return STATES.PROYECTO;
   }
 
@@ -116,34 +108,12 @@ function esPregunta(msg) {
 }
 
 // =============================
-// WORDPRESS CONTEXTO
-// =============================
-async function obtenerContextoWP() {
-  try {
-    const r = await fetch("https://tusitio.com/wp-json/wp/v2/posts?per_page=5");
-    const data = await r.json();
-
-    return data
-      .map(p =>
-        p.content.rendered.replace(/<[^>]*>?/gm, "")
-      )
-      .join("\n")
-      .slice(0, 3000);
-
-  } catch {
-    return "";
-  }
-}
-
-// =============================
-// IA ASESOR (CONTROLADO)
+// IA ASESOR (BLINDADA)
 // =============================
 async function asesorIA(pregunta, respuesta) {
-  if (!OPENROUTER_API_KEY) return null;
-
-  const contextoWP = await obtenerContextoWP();
-
   try {
+    if (!OPENROUTER_API_KEY) return null;
+
     const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -156,17 +126,12 @@ async function asesorIA(pregunta, respuesta) {
           {
             role: "system",
             content: `
-Eres FIO, consultor experto en formulación de proyectos.
+Eres un consultor experto.
 
-REGLAS:
-- NO hagas preguntas
-- SOLO mejora la respuesta
-- NO cambies el flujo
+NO hagas preguntas.
+SOLO mejora texto.
 
-Usa este conocimiento:
-${contextoWP}
-
-Formato obligatorio:
+Formato:
 
 👉 Vas muy bien 🔥  
 👉 Podemos formularlo mejor así:
@@ -177,30 +142,34 @@ Formato obligatorio:
           },
           {
             role: "user",
-            content: `
-Pregunta: ${pregunta}
-Respuesta: ${respuesta}
-`
+            content: `Pregunta: ${pregunta}\nRespuesta: ${respuesta}`
           }
         ]
       })
     });
 
-    const d = await r.json();
-    return d?.choices?.[0]?.message?.content || null;
+    const data = await r.json();
 
-  } catch {
+    if (!data || !data.choices || !data.choices[0]) {
+      console.log("IA inválida:", data);
+      return null;
+    }
+
+    return data.choices[0].message.content;
+
+  } catch (error) {
+    console.log("Error IA:", error.message);
     return null;
   }
 }
 
 // =============================
-// GENERACIÓN FINAL
+// GENERAR PROYECTO
 // =============================
 async function generarProyecto(respuestas) {
-  if (!OPENROUTER_API_KEY) return respuestas.join("\n");
-
   try {
+    if (!OPENROUTER_API_KEY) return respuestas.join("\n");
+
     const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -228,8 +197,9 @@ ${respuestas.join("\n")}
       })
     });
 
-    const d = await r.json();
-    return d?.choices?.[0]?.message?.content || "Error IA";
+    const data = await r.json();
+
+    return data?.choices?.[0]?.message?.content || "Error generando proyecto";
 
   } catch {
     return "Error IA";
@@ -238,7 +208,7 @@ ${respuestas.join("\n")}
 
 // =============================
 app.get("/", (req, res) => {
-  res.send("FIO SaaS PRO 🚀");
+  res.send("FIO PRO funcionando 🚀");
 });
 
 // =============================
@@ -252,9 +222,7 @@ app.post("/chat", async (req, res) => {
     const user = estado[userId];
     const intent = detectarIntencion(msg);
 
-    // =============================
-    // CAMBIO DE MODO (CONTROLADO)
-    // =============================
+    // CAMBIO DE MODO
     if (intent === STATES.PROYECTO && user.state !== STATES.PROYECTO) {
       user.state = STATES.PROYECTO;
       user.paso = 0;
@@ -271,13 +239,11 @@ app.post("/chat", async (req, res) => {
       guardarEstado(estado);
 
       return res.json({
-        response: "🔎 Convocatorias (siguiente fase scraping real)"
+        response: "🔎 Convocatorias (próxima fase)"
       });
     }
 
-    // =============================
     // INICIO
-    // =============================
     if (user.state === STATES.INICIO) {
       user.state = STATES.ESPERANDO;
       guardarEstado(estado);
@@ -293,9 +259,7 @@ Te ayudo a formular proyectos paso a paso.
       });
     }
 
-    // =============================
     // ESPERANDO
-    // =============================
     if (user.state === STATES.ESPERANDO) {
       return res.json({
         response:
@@ -303,9 +267,7 @@ Te ayudo a formular proyectos paso a paso.
       });
     }
 
-    // =============================
     // PROYECTO
-    // =============================
     if (user.state === STATES.PROYECTO) {
 
       const preguntaActual = preguntas[user.paso];
@@ -342,6 +304,10 @@ Describe con contexto claro, población y problema`
 
       const mejora = await asesorIA(preguntaActual, msg);
 
+      const textoMejora = mejora
+        ? mejora
+        : "✔ Respuesta guardada correctamente";
+
       user.respuestas.push(msg);
       guardarEstado(estado);
 
@@ -351,7 +317,7 @@ Describe con contexto claro, población y problema`
 
         return res.json({
           response:
-`${mejora || "✔ Respuesta guardada"}
+`${textoMejora}
 
 📊 Avance: ${Math.round((user.paso / preguntas.length) * 100)}%
 
@@ -375,7 +341,8 @@ Describe con contexto claro, población y problema`
     });
 
   } catch (error) {
-    console.error(error);
+    console.error("ERROR:", error);
+
     return res.status(500).json({
       error: "Error interno del servidor"
     });
@@ -383,5 +350,7 @@ Describe con contexto claro, población y problema`
 });
 
 app.listen(PORT, () => {
+  console.log("Servidor SaaS listo en puerto " + PORT);
+});
   console.log("Servidor SaaS funcionando en puerto " + PORT);
 });
