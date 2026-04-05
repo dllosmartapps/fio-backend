@@ -10,12 +10,10 @@ const PORT = process.env.PORT || 3000;
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 
 // =============================
-// MEMORIA
+// MEMORIA SEGURA (RAM)
 // =============================
 const estado = {};
 
-// =============================
-// PREGUNTAS
 // =============================
 const preguntas = [
   "¿Cómo se llama el proyecto?",
@@ -35,39 +33,21 @@ const preguntas = [
 ];
 
 // =============================
-// PROMPT NIVEL DIOS
-// =============================
-const PROMPT_FIO = `
-Eres FIO, un asesor experto en formulación de proyectos.
-
-REGLA CRÍTICA:
-NO haces preguntas.
-NO cambias flujo.
-SOLO mejoras la respuesta.
-
-FORMATO:
-
-NIVEL: [DÉBIL | MEDIA | BUENA]
-
-MEJORA:
-"texto mejorado"
-
-EXPLICACIÓN:
-explicación breve
-
-Si el usuario no sabe:
-✔ das ejemplos
-✔ lo ayudas
-✔ lo devuelves a la pregunta
-`;
-
-// =============================
-function initUser(id) {
-  estado[id] = {
+function initUser(userId) {
+  estado[userId] = {
     modo: "inicio",
     paso: 0,
     respuestas: []
   };
+}
+
+// =============================
+function getMsg(body) {
+  try {
+    return (body.msg || body.message || "").toString().trim();
+  } catch {
+    return "";
+  }
 }
 
 // =============================
@@ -81,16 +61,19 @@ function detectarIntento(msg) {
 }
 
 // =============================
-function esPregunta(msg) {
-  return msg.includes("?") || msg.toLowerCase().includes("que");
+function validar(msg) {
+  if (!msg || msg.length < 5) return false;
+  return true;
 }
 
 // =============================
-async function llamarIA(pregunta, respuesta) {
+// IA SEGURA (NUNCA CRASHEA)
+// =============================
+async function mejorarRespuesta(pregunta, respuesta) {
   try {
     if (!OPENROUTER_API_KEY) return null;
 
-    const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${OPENROUTER_API_KEY}`,
@@ -99,24 +82,27 @@ async function llamarIA(pregunta, respuesta) {
       body: JSON.stringify({
         model: "openai/gpt-3.5-turbo",
         messages: [
-          { role: "system", content: PROMPT_FIO },
+          {
+            role: "system",
+            content: `
+Eres consultor de proyectos.
+Mejora la respuesta de forma clara y breve.
+NO hagas preguntas.
+`
+          },
           {
             role: "user",
-            content: `
-PREGUNTA DEL SISTEMA:
-${pregunta}
-
-RESPUESTA DEL USUARIO:
-${respuesta}
-`
+            content: `Pregunta: ${pregunta}\nRespuesta: ${respuesta}`
           }
         ]
       })
     });
 
-    const data = await r.json();
+    const data = await response.json();
 
-    return data?.choices?.[0]?.message?.content || null;
+    if (!data || !data.choices) return null;
+
+    return data.choices[0]?.message?.content || null;
 
   } catch (e) {
     console.log("IA ERROR:", e.message);
@@ -126,19 +112,19 @@ ${respuesta}
 
 // =============================
 app.get("/", (req, res) => {
-  res.send("FIO PRO listo 🚀");
+  res.send("FIO estable 🚀");
 });
 
 // =============================
 app.post("/chat", async (req, res) => {
   try {
     let userId = req.body.userId || "global";
-    let msg = (req.body.msg || "").toString().trim();
+    let msg = getMsg(req.body);
 
     if (!estado[userId]) initUser(userId);
 
     const user = estado[userId];
-    const intento = detectarIntento(msg);
+    const intent = detectarIntento(msg);
 
     // =============================
     // SALUDO
@@ -147,9 +133,10 @@ app.post("/chat", async (req, res) => {
       user.modo = "esperando";
 
       return res.json({
-        response: `Hola 👋 Soy FIO.
+        response:
+`Hola 👋 Soy FIO.
 
-Te ayudo a formular proyectos paso a paso.
+Puedo ayudarte a formular proyectos paso a paso.
 
 👉 Escribe:
 "Quiero crear un proyecto"`
@@ -157,11 +144,11 @@ Te ayudo a formular proyectos paso a paso.
     }
 
     // =============================
-    // ESPERA
+    // ESPERANDO
     // =============================
     if (user.modo === "esperando") {
 
-      if (intento === "proyecto") {
+      if (intent === "proyecto") {
         user.modo = "proyecto";
         user.paso = 0;
         user.respuestas = [];
@@ -171,56 +158,42 @@ Te ayudo a formular proyectos paso a paso.
         });
       }
 
-      if (intento === "convocatorias") {
+      if (intent === "convocatorias") {
         return res.json({
-          response: "🔎 Convocatorias (próxima fase scraping)"
+          response: "🔎 Convocatorias (próxima fase)"
         });
       }
 
       return res.json({
-        response: `👉 Escribe:
-- Quiero crear un proyecto
-- Ver convocatorias`
+        response:
+"👉 Escribe:\n- Quiero crear un proyecto\n- Ver convocatorias"
       });
     }
 
     // =============================
-    // MODO PROYECTO
+    // PROYECTO
     // =============================
     if (user.modo === "proyecto") {
 
       const pregunta = preguntas[user.paso];
 
-      // bloquear cambio de modo
-      if (intento === "convocatorias") {
+      // BLOQUEAR CAMBIO DE TEMA
+      if (intent === "convocatorias") {
         return res.json({
-          response: "⚠️ Termina el proyecto o escribe 'salir'"
+          response:
+"⚠️ Estamos creando tu proyecto.\nEscribe 'salir' si quieres cambiar de modo."
         });
       }
 
-      // usuario hace pregunta
-      if (esPregunta(msg)) {
+      if (!validar(msg)) {
         return res.json({
-          response: `💡 Te ayudo:
-
-Para "${pregunta}" debes responder con claridad y detalle.
-
-Ejemplo:
-- Opción 1
-- Opción 2
-
-👉 Ahora responde:
-${pregunta}`
+          response:
+`👀 Necesito más detalle.\n\n👉 ${pregunta}`
         });
       }
 
-      if (msg.length < 3) {
-        return res.json({
-          response: `👀 Dame más detalle.\n\n👉 ${pregunta}`
-        });
-      }
-
-      const mejora = await llamarIA(pregunta, msg);
+      const mejora = await mejorarRespuesta(pregunta, msg);
+      const texto = mejora || "✔ Respuesta guardada";
 
       user.respuestas.push(msg);
 
@@ -228,7 +201,8 @@ ${pregunta}`
         user.paso++;
 
         return res.json({
-          response: `${mejora || "✔ Respuesta guardada"}
+          response:
+`${texto}
 
 📊 Avance: ${Math.round((user.paso / preguntas.length) * 100)}%
 
@@ -240,24 +214,24 @@ ${pregunta}`
       initUser(userId);
 
       return res.json({
-        response: "🎉 Proyecto formulado correctamente (fase siguiente: generación completa)"
+        response: "🎉 Proyecto completado correctamente"
       });
     }
 
     return res.json({
-      response: "Error de estado"
+      response: "Error de estado, escribe 'Quiero crear un proyecto'"
     });
 
   } catch (error) {
-    console.error("ERROR:", error);
+    console.error("CRASH:", error);
 
-    return res.json({
-      response: "⚠️ Error interno, intenta nuevamente"
+    return res.status(200).json({
+      response: "⚠️ Ocurrió un error, intenta de nuevo"
     });
   }
 });
 
 // =============================
 app.listen(PORT, () => {
-  console.log("Servidor PRO en puerto " + PORT);
+  console.log("Servidor estable en puerto " + PORT);
 });
