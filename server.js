@@ -1,7 +1,9 @@
-const express = require("express");
-const cors = require("cors");
-const axios = require("axios");
-require("dotenv").config();
+import express from "express";
+import cors from "cors";
+import axios from "axios";
+import dotenv from "dotenv";
+
+dotenv.config();
 
 const app = express();
 app.use(cors());
@@ -88,13 +90,16 @@ Responde SIEMPRE así:
 👉 Responde "SI" para confirmar o escribe tu mejora
 `
           },
-          { role: "user", content: mensaje }
+          {
+            role: "user",
+            content: mensaje
+          }
         ],
         temperature: 0.4
       },
       {
         headers: {
-          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, // ✅ CORREGIDO
+          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
           "Content-Type": "application/json"
         },
         timeout: 15000
@@ -104,13 +109,13 @@ Responde SIEMPRE así:
     return response.data.choices[0].message.content;
 
   } catch (error) {
-    console.error(error.message);
-    return "⚠️ Error IA. Escribe una respuesta más clara.";
+    console.error("ERROR IA:", error.message);
+    return "⚠️ Error IA";
   }
 }
 
 // =============================
-// 📊 MATRIZ IA
+// 📊 MATRIZ
 // =============================
 async function generarMatrizIA(respuestas) {
   const prompt = `
@@ -151,24 +156,19 @@ app.post("/chat", async (req, res) => {
 
     const user = estado[uid];
 
-    // INICIO
     if (user.paso === 0) {
       user.paso = 1;
       return res.json({
-        response: `Hola, soy tu asistente MML (CEPAL).
-
-👉 ${pasos[0]}`
+        response: `Hola, soy tu asistente MML (CEPAL).\n\n👉 ${pasos[0]}`
       });
     }
 
-    // VALIDACIÓN
     if (!validar(msg)) {
       return res.json({
         response: "⚠️ Respuesta muy corta. Mejora un poco más."
       });
     }
 
-    // CONFIRMACIÓN
     if (user.esperandoConfirmacion) {
 
       if (msg.toLowerCase().includes("si")) {
@@ -180,9 +180,7 @@ app.post("/chat", async (req, res) => {
 
         if (user.paso > pasos.length) {
           return res.json({
-            response: `🎉 Proyecto completo
-
-Escribe: MATRIZ`
+            response: `🎉 Proyecto completo\n\nEscribe: MATRIZ`
           });
         }
 
@@ -199,7 +197,6 @@ Escribe: MATRIZ`
       }
     }
 
-    // PROCESAR
     user.propuesta = msg;
     user.esperandoConfirmacion = true;
 
@@ -208,6 +205,7 @@ Escribe: MATRIZ`
     return res.json({ response: feedback });
 
   } catch (error) {
+    console.error("ERROR CHAT:", error.message);
     return res.status(500).json({
       response: "Error servidor"
     });
@@ -215,7 +213,7 @@ Escribe: MATRIZ`
 });
 
 // =============================
-// 📊 MATRIZ
+// 📊 MATRIZ ENDPOINT
 // =============================
 app.post("/matriz", async (req, res) => {
   try {
@@ -230,9 +228,12 @@ app.post("/matriz", async (req, res) => {
 
     const matriz = await generarMatrizIA(estado[uid].respuestas);
 
-    return res.json({ response: matriz });
+    return res.json({
+      response: matriz
+    });
 
   } catch (error) {
+    console.error("ERROR MATRIZ:", error.message);
     return res.status(500).json({
       response: "Error matriz"
     });
@@ -252,5 +253,5 @@ app.get("/", (req, res) => {
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
-  console.log("🚀 FIO PRO activo en puerto " + PORT);
+  console.log("🚀 FIO PRO corriendo en puerto " + PORT);
 });
