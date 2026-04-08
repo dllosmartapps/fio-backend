@@ -1,7 +1,10 @@
 import express from "express";
 import cors from "cors";
-import axios from "axios";
+import fetch from "node-fetch";
 import dotenv from "dotenv";
+
+import { buscarConvocatorias } from "./modules/scraper.js";
+import { hacerMatching } from "./modules/matching.js";
 
 dotenv.config();
 
@@ -9,9 +12,9 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// VALIDAR API KEY
+// VALIDAR KEYS
 if (!process.env.OPENROUTER_API_KEY) {
-  console.error("❌ Falta API KEY");
+  console.error("❌ Falta OPENROUTER_API_KEY");
   process.exit(1);
 }
 
@@ -42,12 +45,16 @@ const claves = [
   "componentes","actividades","indicadores","supuestos"
 ];
 
-// IA
+// IA (FETCH)
 async function consultarIA(mensaje) {
   try {
-    const response = await axios.post(
-      "https://openrouter.ai/api/v1/chat/completions",
-      {
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
         model: "openai/gpt-4o-mini",
         messages: [
           {
@@ -56,16 +63,12 @@ async function consultarIA(mensaje) {
           },
           { role: "user", content: mensaje }
         ]
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-          "Content-Type": "application/json"
-        }
-      }
-    );
+      })
+    });
 
-    return response.data.choices[0].message.content;
+    const data = await response.json();
+
+    return data.choices?.[0]?.message?.content || "⚠️ Sin respuesta IA";
 
   } catch (error) {
     console.error("ERROR IA:", error.message);
@@ -74,7 +77,7 @@ async function consultarIA(mensaje) {
 }
 
 // CHAT
-app.post("/chat", async (req, res) => {
+app.post("/chat", (req, res) => {
   try {
     const { userId, msg } = req.body;
     const uid = userId || "default";
@@ -94,7 +97,7 @@ app.post("/chat", async (req, res) => {
     user.paso++;
 
     if (user.paso > pasos.length) {
-      return res.json({ response: "Escribe MATRIZ" });
+      return res.json({ response: "Escribe MATRIZ o MATCH" });
     }
 
     return res.json({ response: pasos[user.paso - 1] });
@@ -110,11 +113,7 @@ app.post("/matriz", async (req, res) => {
     const { userId } = req.body;
     const uid = userId || "default";
 
-    if (!estado[uid]) {
-      return res.json({ response: "No hay datos" });
-    }
-
-    const matriz = await consultarIA(JSON.stringify(estado[uid].respuestas));
+    const matriz = await consultarIA(JSON.stringify(estado[uid]?.respuestas || {}));
 
     return res.json({ response: matriz });
 
@@ -123,14 +122,33 @@ app.post("/matriz", async (req, res) => {
   }
 });
 
+// MATCH CONVOCATORIAS
+app.post("/match", async (req, res) => {
+  try {
+    const { userId } = req.body;
+    const uid = userId || "default";
+
+    const proyecto = estado[uid]?.respuestas || {};
+
+    const convocatorias = await buscarConvocatorias(proyecto.problema || "");
+
+    const resultado = hacerMatching(proyecto, convocatorias);
+
+    return res.json({ response: resultado });
+
+  } catch (error) {
+    return res.status(500).json({ response: "Error matching" });
+  }
+});
+
 // TEST
 app.get("/", (req, res) => {
-  res.send("🚀 Backend activo");
+  res.send("🚀 FIO backend OK");
 });
 
 // SERVER
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
-  console.log("🔥 Server corriendo en " + PORT);
+  console.log("🔥 Server corriendo en puerto " + PORT);
 });
