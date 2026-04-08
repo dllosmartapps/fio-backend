@@ -1,21 +1,27 @@
-import express from "express";
-import cors from "cors";
-import axios from "axios";
-import dotenv from "dotenv";
-
-dotenv.config();
+const express = require("express");
+const cors = require("cors");
+const axios = require("axios");
+require("dotenv").config();
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 // =============================
-// MEMORIA
+// 🔒 VALIDAR API KEY
+// =============================
+if (!process.env.OPENROUTER_API_KEY) {
+  console.error("❌ FALTA OPENROUTER_API_KEY");
+  process.exit(1);
+}
+
+// =============================
+// 🧠 MEMORIA EN RAM
 // =============================
 const estado = {};
 
 // =============================
-// PASOS (14)
+// 📋 PASOS (14)
 // =============================
 const pasos = [
   "¿Qué problema quieres resolver?",
@@ -34,9 +40,6 @@ const pasos = [
   "¿Qué puede afectar el proyecto?"
 ];
 
-// =============================
-// CLAVES RESPUESTAS
-// =============================
 const claves = [
   "problema",
   "grupo",
@@ -55,7 +58,7 @@ const claves = [
 ];
 
 // =============================
-// IA
+// 🤖 IA (OpenRouter)
 // =============================
 async function consultarIA(mensaje) {
   try {
@@ -67,9 +70,7 @@ async function consultarIA(mensaje) {
           {
             role: "system",
             content: `
-Eres un profesor experto en formulación de proyectos con metodología de marco lógico (CEPAL).
-
-Analiza la respuesta del usuario.
+Eres experto en metodología de marco lógico (CEPAL).
 
 Responde SIEMPRE así:
 
@@ -91,29 +92,34 @@ Responde SIEMPRE así:
       },
       {
         headers: {
-          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+          Authorization: \`Bearer \${process.env.OPENROUTER_API_KEY}\`,
           "Content-Type": "application/json"
         },
-        timeout: 15000
+        timeout: 20000
       }
     );
 
     return response.data.choices[0].message.content;
 
   } catch (error) {
-    console.error(error.message);
-    return "⚠️ Error IA. Escribe una respuesta más clara.";
+    console.error("❌ ERROR IA:", error.message);
+    return "⚠️ Error IA. Revisa API o conexión.";
   }
 }
 
 // =============================
-// MATRIZ IA
+// 📊 MATRIZ
 // =============================
 async function generarMatrizIA(respuestas) {
   const prompt = `
 Genera una MATRIZ DE MARCO LÓGICO profesional con:
 
-Fin, Propósito, Componentes, Actividades, Indicadores, Supuestos
+Fin
+Propósito
+Componentes
+Actividades
+Indicadores
+Supuestos
 
 Basado en:
 ${JSON.stringify(respuestas, null, 2)}
@@ -123,14 +129,14 @@ ${JSON.stringify(respuestas, null, 2)}
 }
 
 // =============================
-// VALIDACIÓN
+// ✔ VALIDACIÓN SIMPLE
 // =============================
 function validar(msg) {
   return msg && msg.trim().length > 8;
 }
 
 // =============================
-// CHAT
+// 💬 CHAT
 // =============================
 app.post("/chat", async (req, res) => {
   try {
@@ -148,20 +154,18 @@ app.post("/chat", async (req, res) => {
 
     const user = estado[uid];
 
-    // BIENVENIDA
+    // INICIO
     if (user.paso === 0) {
       user.paso = 1;
       return res.json({
-        response: `Hola, soy tu asistente MML (CEPAL).
-
-👉 ${pasos[0]}`
+        response: `👋 Asistente MML activo\n\n👉 ${pasos[0]}`
       });
     }
 
     // VALIDACIÓN
     if (!validar(msg)) {
       return res.json({
-        response: "⚠️ Respuesta muy corta. Mejora un poco más."
+        response: "⚠️ Escribe una respuesta más completa."
       });
     }
 
@@ -171,15 +175,12 @@ app.post("/chat", async (req, res) => {
       if (msg.toLowerCase().includes("si")) {
 
         user.respuestas[claves[user.paso - 1]] = user.propuesta;
-
         user.esperandoConfirmacion = false;
         user.paso++;
 
         if (user.paso > pasos.length) {
           return res.json({
-            response: `🎉 Proyecto completo
-
-Escribe: MATRIZ`
+            response: "🎉 Proyecto completo\n\nEscribe: MATRIZ"
           });
         }
 
@@ -191,20 +192,19 @@ Escribe: MATRIZ`
 
         user.propuesta = msg;
         const feedback = await consultarIA(msg);
-
         return res.json({ response: feedback });
       }
     }
 
-    // PROCESAR
+    // PROCESAR RESPUESTA
     user.propuesta = msg;
     user.esperandoConfirmacion = true;
 
     const feedback = await consultarIA(msg);
-
     return res.json({ response: feedback });
 
   } catch (error) {
+    console.error("❌ ERROR CHAT:", error.message);
     return res.status(500).json({
       response: "Error servidor"
     });
@@ -212,7 +212,7 @@ Escribe: MATRIZ`
 });
 
 // =============================
-// MATRIZ
+// 📊 ENDPOINT MATRIZ
 // =============================
 app.post("/matriz", async (req, res) => {
   try {
@@ -221,26 +221,36 @@ app.post("/matriz", async (req, res) => {
 
     if (!estado[uid]) {
       return res.json({
-        response: "No hay proyecto"
+        response: "⚠️ No hay proyecto iniciado"
       });
     }
 
     const matriz = await generarMatrizIA(estado[uid].respuestas);
 
-    return res.json({ response: matriz });
+    return res.json({
+      response: `📊 MATRIZ DE MARCO LÓGICO\n\n${matriz}`
+    });
 
   } catch (error) {
+    console.error("❌ ERROR MATRIZ:", error.message);
     return res.status(500).json({
-      response: "Error matriz"
+      response: "Error generando matriz"
     });
   }
 });
 
 // =============================
-// SERVER
+// ❤️ HEALTH CHECK (IMPORTANTE)
+// =============================
+app.get("/", (req, res) => {
+  res.send("🚀 FIO Backend activo");
+});
+
+// =============================
+// 🚀 SERVER
 // =============================
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
-  console.log("🚀 FIO PRO activo en puerto " + PORT);
+  console.log("🔥 Backend corriendo en puerto " + PORT);
 });
