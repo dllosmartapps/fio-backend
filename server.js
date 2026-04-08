@@ -5,34 +5,96 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// 🔐 VARIABLE DESDE RAILWAY
+// =============================
+// 🔒 CONFIG
+// =============================
 const OPENROUTER_API_KEY = process.env.openr;
-
-// 🧠 CONFIG BASE IA
 const MODEL = "openai/gpt-4o-mini";
 
-// 🔍 HEALTH CHECK
-app.get("/", (req, res) => {
-  res.json({
-    status: "OK",
-    service: "FIO Agente IA",
-    version: "PRO",
-    endpoints: ["/chat", "/matriz"]
-  });
-});
+if (!OPENROUTER_API_KEY) {
+  console.error("❌ FALTA API KEY openr en Railway");
+}
 
-// 🔧 FUNCIÓN CENTRAL IA (REUTILIZABLE)
-async function consultarIA(messages) {
+// =============================
+// 🧠 MEMORIA
+// =============================
+const estado = {};
+
+// =============================
+// 📋 PASOS (14)
+// =============================
+const pasos = [
+  "¿Qué problema quieres resolver?",
+  "¿A quién afecta el problema?",
+  "Describe claramente el problema central.",
+  "¿Cuáles son las causas principales?",
+  "¿Qué efectos genera el problema?",
+  "¿Deseas ajustar el problema central?",
+  "Convierte el problema en objetivo general.",
+  "Define objetivos específicos.",
+  "¿Qué soluciones posibles existen?",
+  "¿Cuál eliges y por qué?",
+  "¿Qué entregará el proyecto?",
+  "¿Qué actividades se deben realizar?",
+  "¿Cómo medirás el éxito?",
+  "¿Qué puede afectar el proyecto?"
+];
+
+const claves = [
+  "problema",
+  "grupo",
+  "descripcion",
+  "causas",
+  "efectos",
+  "validacion",
+  "objetivo",
+  "objetivos_especificos",
+  "alternativas",
+  "estrategia",
+  "componentes",
+  "actividades",
+  "indicadores",
+  "supuestos"
+];
+
+// =============================
+// 🤖 IA (SIN AXIOS)
+// =============================
+async function consultarIA(mensaje) {
   try {
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
+        Authorization: `Bearer ${OPENROUTER_API_KEY}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
         model: MODEL,
-        messages
+        messages: [
+          {
+            role: "system",
+            content: `
+Eres un profesor experto en formulación de proyectos con metodología de marco lógico (CEPAL).
+
+Analiza la respuesta del usuario.
+
+Responde SIEMPRE así:
+
+🔍 ANÁLISIS:
+...
+
+✏️ CORRECCIÓN:
+...
+
+✅ VERSIÓN MEJORADA:
+"texto mejorado"
+
+👉 Responde "SI" para confirmar o escribe tu mejora
+`
+          },
+          { role: "user", content: mensaje }
+        ],
+        temperature: 0.4
       })
     });
 
@@ -45,111 +107,172 @@ async function consultarIA(messages) {
     return data.choices[0].message.content;
 
   } catch (error) {
-    console.error("ERROR IA:", error.message);
-    return "⚠️ Error procesando la solicitud.";
+    console.error("IA ERROR:", error.message);
+    return "⚠️ Error IA. Escribe una respuesta más clara.";
   }
 }
 
-// 💬 CHAT INTELIGENTE (AGENTE)
-app.post("/chat", async (req, res) => {
-  try {
-    const { message, userId } = req.body;
+// =============================
+// 📊 MATRIZ IA
+// =============================
+async function generarMatrizIA(respuestas) {
+  const prompt = `
+Genera una MATRIZ DE MARCO LÓGICO profesional con:
 
-    if (!message) {
-      return res.status(400).json({ error: "Mensaje requerido" });
-    }
+Fin
+Propósito
+Componentes
+Actividades
+Indicadores (SMART)
+Medios de verificación
+Supuestos
 
-    // 🧠 PROMPT AGENTE FIO
-    const messages = [
-      {
-        role: "system",
-        content: `
-Eres un formulador experto de proyectos bajo metodología de marco lógico (CEPAL, BID).
-Respondes estructurado, claro y aplicable.
-Ayudas a construir:
-- Diagnóstico
-- Problema central
-- Árbol de problemas
-- Objetivos
-- Indicadores
-- Actividades
-`
-      },
-      {
-        role: "user",
-        content: message
-      }
-    ];
-
-    const respuesta = await consultarIA(messages);
-
-    res.json({ response: respuesta });
-
-  } catch (error) {
-    console.error("ERROR CHAT:", error.message);
-    res.status(500).json({ error: "Error en chat" });
-  }
-});
-
-// 🔥 GENERADOR MATRIZ AUTOMÁTICA
-app.post("/matriz", async (req, res) => {
-  try {
-    const { contexto } = req.body;
-
-    const prompt = `
-Actúa como experto en marco lógico (BID/CEPAL).
-Genera una MATRIZ COMPLETA con:
-
-1. Fin
-2. Propósito
-3. Componentes
-4. Actividades
-5. Indicadores (SMART)
-6. Medios de verificación
-7. Supuestos
-
-Contexto:
-${contexto || "Proyecto social general"}
-
-Formato en tabla clara.
+Basado en:
+${JSON.stringify(respuestas, null, 2)}
 `;
 
-    const messages = [
-      { role: "system", content: "Eres experto en formulación de proyectos." },
-      { role: "user", content: prompt }
-    ];
+  return await consultarIA(prompt);
+}
 
-    const respuesta = await consultarIA(messages);
+// =============================
+// ✔ VALIDACIÓN
+// =============================
+function validar(msg) {
+  return msg && msg.trim().length > 8;
+}
 
-    res.json({ response: respuesta });
+// =============================
+// 💬 CHAT
+// =============================
+app.post("/chat", async (req, res) => {
+  try {
+    const { userId, msg } = req.body;
+    const uid = userId || "default";
+
+    if (!estado[uid]) {
+      estado[uid] = {
+        paso: 0,
+        respuestas: {},
+        esperandoConfirmacion: false,
+        propuesta: ""
+      };
+    }
+
+    const user = estado[uid];
+
+    // INICIO
+    if (user.paso === 0) {
+      user.paso = 1;
+      return res.json({
+        response: `Hola, soy tu asistente MML (CEPAL).
+
+👉 ${pasos[0]}`
+      });
+    }
+
+    // VALIDACIÓN
+    if (!validar(msg)) {
+      return res.json({
+        response: "⚠️ Respuesta muy corta. Mejora un poco más."
+      });
+    }
+
+    // CONFIRMACIÓN
+    if (user.esperandoConfirmacion) {
+
+      if (msg.toLowerCase().includes("si")) {
+
+        user.respuestas[claves[user.paso - 1]] = user.propuesta;
+
+        user.esperandoConfirmacion = false;
+        user.paso++;
+
+        if (user.paso > pasos.length) {
+          return res.json({
+            response: `🎉 Proyecto completo
+
+Escribe: MATRIZ`
+          });
+        }
+
+        return res.json({
+          response: `👉 ${pasos[user.paso - 1]}`
+        });
+
+      } else {
+
+        user.propuesta = msg;
+        const feedback = await consultarIA(msg);
+
+        return res.json({ response: feedback });
+      }
+    }
+
+    // PROCESAR RESPUESTA
+    user.propuesta = msg;
+    user.esperandoConfirmacion = true;
+
+    const feedback = await consultarIA(msg);
+
+    return res.json({ response: feedback });
 
   } catch (error) {
-    console.error("ERROR MATRIZ:", error.message);
-    res.status(500).json({ error: "Error generando matriz" });
+    console.error("CHAT ERROR:", error.message);
+    return res.status(500).json({
+      response: "Error servidor"
+    });
   }
 });
 
-// 🧪 DEBUG ENDPOINT
-app.get("/test-ia", async (req, res) => {
-  const respuesta = await consultarIA([
-    { role: "user", content: "di hola en 5 palabras" }
-  ]);
+// =============================
+// 📊 MATRIZ
+// =============================
+app.post("/matriz", async (req, res) => {
+  try {
+    const { userId } = req.body;
+    const uid = userId || "default";
 
-  res.json({ test: respuesta });
+    if (!estado[uid]) {
+      return res.json({
+        response: "No hay proyecto"
+      });
+    }
+
+    const matriz = await generarMatrizIA(estado[uid].respuestas);
+
+    return res.json({ response: matriz });
+
+  } catch (error) {
+    console.error("MATRIZ ERROR:", error.message);
+    return res.status(500).json({
+      response: "Error matriz"
+    });
+  }
 });
 
-// 🚀 SERVIDOR ROBUSTO
+// =============================
+// ❤️ TEST
+// =============================
+app.get("/", (req, res) => {
+  res.send("🚀 FIO Backend PRO activo");
+});
+
+// =============================
+// 🚀 SERVER
+// =============================
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
-  console.log(`🚀 FIO backend PRO corriendo en puerto ${PORT}`);
+  console.log("🚀 FIO PRO activo en puerto " + PORT);
 });
 
-// 🛑 CAPTURA GLOBAL (ANTI-CRASH)
-process.on("uncaughtException", (err) => {
-  console.error("ERROR GLOBAL:", err.message);
+// =============================
+// 🛑 ANTI CRASH GLOBAL
+// =============================
+process.on("uncaughtException", err => {
+  console.error("GLOBAL ERROR:", err);
 });
 
-process.on("unhandledRejection", (err) => {
-  console.error("PROMESA FALLIDA:", err);
+process.on("unhandledRejection", err => {
+  console.error("PROMISE ERROR:", err);
 });
