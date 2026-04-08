@@ -9,22 +9,16 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// =============================
-// 🔒 VALIDAR API KEY
-// =============================
+// VALIDAR API KEY
 if (!process.env.OPENROUTER_API_KEY) {
-  console.error("❌ FALTA OPENROUTER_API_KEY");
+  console.error("❌ Falta API KEY");
   process.exit(1);
 }
 
-// =============================
-// 🧠 MEMORIA
-// =============================
+// MEMORIA
 const estado = {};
 
-// =============================
-// 📋 PASOS (14)
-// =============================
+// PASOS
 const pasos = [
   "¿Qué problema quieres resolver?",
   "¿A quién afecta el problema?",
@@ -43,25 +37,12 @@ const pasos = [
 ];
 
 const claves = [
-  "problema",
-  "grupo",
-  "descripcion",
-  "causas",
-  "efectos",
-  "validacion",
-  "objetivo",
-  "objetivos_especificos",
-  "alternativas",
-  "estrategia",
-  "componentes",
-  "actividades",
-  "indicadores",
-  "supuestos"
+  "problema","grupo","descripcion","causas","efectos","validacion",
+  "objetivo","objetivos_especificos","alternativas","estrategia",
+  "componentes","actividades","indicadores","supuestos"
 ];
 
-// =============================
-// 🤖 IA
-// =============================
+// IA
 async function consultarIA(mensaje) {
   try {
     const response = await axios.post(
@@ -71,38 +52,16 @@ async function consultarIA(mensaje) {
         messages: [
           {
             role: "system",
-            content: `
-Eres un profesor experto en formulación de proyectos con metodología de marco lógico (CEPAL).
-
-Analiza la respuesta del usuario.
-
-Responde SIEMPRE así:
-
-🔍 ANÁLISIS:
-...
-
-✏️ CORRECCIÓN:
-...
-
-✅ VERSIÓN MEJORADA:
-"texto mejorado"
-
-👉 Responde "SI" para confirmar o escribe tu mejora
-`
+            content: "Eres experto en marco lógico. Analiza y mejora la respuesta."
           },
-          {
-            role: "user",
-            content: mensaje
-          }
-        ],
-        temperature: 0.4
+          { role: "user", content: mensaje }
+        ]
       },
       {
         headers: {
           Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
           "Content-Type": "application/json"
-        },
-        timeout: 15000
+        }
       }
     );
 
@@ -114,144 +73,64 @@ Responde SIEMPRE así:
   }
 }
 
-// =============================
-// 📊 MATRIZ
-// =============================
-async function generarMatrizIA(respuestas) {
-  const prompt = `
-Genera una MATRIZ DE MARCO LÓGICO profesional con:
-
-Fin, Propósito, Componentes, Actividades, Indicadores, Supuestos
-
-Basado en:
-${JSON.stringify(respuestas, null, 2)}
-`;
-
-  return await consultarIA(prompt);
-}
-
-// =============================
-// ✔ VALIDACIÓN
-// =============================
-function validar(msg) {
-  return msg && msg.trim().length > 8;
-}
-
-// =============================
-// 💬 CHAT
-// =============================
+// CHAT
 app.post("/chat", async (req, res) => {
   try {
     const { userId, msg } = req.body;
     const uid = userId || "default";
 
     if (!estado[uid]) {
-      estado[uid] = {
-        paso: 0,
-        respuestas: {},
-        esperandoConfirmacion: false,
-        propuesta: ""
-      };
+      estado[uid] = { paso: 0, respuestas: {} };
     }
 
     const user = estado[uid];
 
     if (user.paso === 0) {
       user.paso = 1;
-      return res.json({
-        response: `Hola, soy tu asistente MML (CEPAL).\n\n👉 ${pasos[0]}`
-      });
+      return res.json({ response: pasos[0] });
     }
 
-    if (!validar(msg)) {
-      return res.json({
-        response: "⚠️ Respuesta muy corta. Mejora un poco más."
-      });
+    user.respuestas[claves[user.paso - 1]] = msg;
+    user.paso++;
+
+    if (user.paso > pasos.length) {
+      return res.json({ response: "Escribe MATRIZ" });
     }
 
-    if (user.esperandoConfirmacion) {
-
-      if (msg.toLowerCase().includes("si")) {
-
-        user.respuestas[claves[user.paso - 1]] = user.propuesta;
-
-        user.esperandoConfirmacion = false;
-        user.paso++;
-
-        if (user.paso > pasos.length) {
-          return res.json({
-            response: `🎉 Proyecto completo\n\nEscribe: MATRIZ`
-          });
-        }
-
-        return res.json({
-          response: `👉 ${pasos[user.paso - 1]}`
-        });
-
-      } else {
-
-        user.propuesta = msg;
-        const feedback = await consultarIA(msg);
-
-        return res.json({ response: feedback });
-      }
-    }
-
-    user.propuesta = msg;
-    user.esperandoConfirmacion = true;
-
-    const feedback = await consultarIA(msg);
-
-    return res.json({ response: feedback });
+    return res.json({ response: pasos[user.paso - 1] });
 
   } catch (error) {
-    console.error("ERROR CHAT:", error.message);
-    return res.status(500).json({
-      response: "Error servidor"
-    });
+    return res.status(500).json({ response: "Error servidor" });
   }
 });
 
-// =============================
-// 📊 MATRIZ ENDPOINT
-// =============================
+// MATRIZ
 app.post("/matriz", async (req, res) => {
   try {
     const { userId } = req.body;
     const uid = userId || "default";
 
     if (!estado[uid]) {
-      return res.json({
-        response: "No hay proyecto"
-      });
+      return res.json({ response: "No hay datos" });
     }
 
-    const matriz = await generarMatrizIA(estado[uid].respuestas);
+    const matriz = await consultarIA(JSON.stringify(estado[uid].respuestas));
 
-    return res.json({
-      response: matriz
-    });
+    return res.json({ response: matriz });
 
   } catch (error) {
-    console.error("ERROR MATRIZ:", error.message);
-    return res.status(500).json({
-      response: "Error matriz"
-    });
+    return res.status(500).json({ response: "Error matriz" });
   }
 });
 
-// =============================
-// ❤️ TEST
-// =============================
+// TEST
 app.get("/", (req, res) => {
-  res.send("🚀 FIO Backend activo");
+  res.send("🚀 Backend activo");
 });
 
-// =============================
-// 🚀 SERVER
-// =============================
+// SERVER
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
-  console.log("🚀 FIO PRO corriendo en puerto " + PORT);
+  console.log("🔥 Server corriendo en " + PORT);
 });
